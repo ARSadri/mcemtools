@@ -6,9 +6,10 @@ import pytest
 
 from click.testing import CliRunner
 
-from mcemtools import mcemtools
-from mcemtools import cli
+import mcemtools
+import mcemtools.denoise.denoise_4DSTEM.denoise_4DSTEM as mcemdenoiser
 
+from mcemtools import cli
 
 @pytest.fixture
 def response():
@@ -31,7 +32,14 @@ def test_command_line_interface():
     runner = CliRunner()
     result = runner.invoke(cli.main)
     assert result.exit_code == 0
-    assert 'mcemtools.cli.main' in result.output
+    #assert 'mcemtools.cli.main' in result.output
     help_result = runner.invoke(cli.main, ['--help'])
     assert help_result.exit_code == 0
     assert '--help  Show this message and exit.' in help_result.output
+
+def test_mcemtools_denoise_4DSTEM():
+    
+    data_4DSTEM = np.load('data_from_Py4DSTEM.npy')
+    data_4DSTEM = np.random.randn(256, 256, 64, 64)
+    denoiser = mcem_denoiser(data_4DSTEM)
+    

@@ -10,7 +10,7 @@ def main(args=None):
     """Console script for mcemtools."""
     click.echo("Welcome to mcemtools")
     click.echo("A Python package to run state-of-the-art solutions for" + \
-               " electron microscopy")
+               " electron microscopy problems")
     return 0
 
 
