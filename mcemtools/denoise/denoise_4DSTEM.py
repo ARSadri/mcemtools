@@ -1,7 +1,14 @@
+"""
+Module to denoise 4DSTEM data.
+"""
+
 class denoise_4DSTEM:
-    """ Main class for denoising the 4D STEM dataset using unsupervised ML
+    """ 
+    ### 4D STEM denoiing
     
-    Unsupervised denoising
+    This is the main class for denoising the dataset using unsupervised ML.
+    
+    ### Unsupervised denoising
     It is only natural to assume that noise is the common mode of all indipendent
     data points. This is different from outliers that are not going to be modeled.
     
@@ -20,11 +27,13 @@ class denoise_4DSTEM:
     This principle allows us to create a dataset out of the input dataset that 
     is similar to input but lacks some data or is heavily interleaved and shuffled.
     
-    In this class of problemsolution, we have the following functions:
-        * Class initialization
-            ** all training parameters go here
-        * input dataset is 
-            ** dataset is given here and the output will be another dataset
+    In this class of problem/solution, we have the following functions:
+        * Class initialization: all training parameters go here
+        * training dataset generator: This is given here and the output will 
+            be another dataset
+        * solve_step: which will go through the solution for a step
+        * solve: You can check attributes for logging to see if you'd like to stop
+            Then it provides you with the output labeling function.
     
     Attributes
     ----------
@@ -33,7 +42,7 @@ class denoise_4DSTEM:
     
     Example
     -------
-        Create a denoiserL::
+        :Create a denoiser::
             import mcemtools.denoise_4DSTEM
             denoiser = mcemtools.denoise_4DSTEM(lr = 1e-3)
     """
