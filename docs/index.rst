@@ -13,8 +13,9 @@ Welcome to mcemtools's documentation!
    authors
    history
 
-Indices and tables
+Components
 ==================
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+.. toctree::
+   :maxdepth: 2
+
+    mcemtools - mcemtools's python package<mcemtools>
