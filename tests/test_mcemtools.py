@@ -39,7 +39,7 @@ def test_command_line_interface():
 
 def test_mcemtools_denoise_4DSTEM():
     
-    data_4DSTEM = np.load('data_from_Py4DSTEM.npy')
-    data_4DSTEM = np.random.randn(256, 256, 64, 64)
-    denoiser = mcem_denoiser(data_4DSTEM)
+    #data_4DSTEM = np.load('data_from_Py4DSTEM.npy')
+    data_4DSTEM = 10 + np.random.randn(256, 256, 64, 64)
+    denoised_data = mcem_denoiser(data_4DSTEM)
     
