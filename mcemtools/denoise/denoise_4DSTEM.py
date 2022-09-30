@@ -4,21 +4,21 @@ Module to denoise 4DSTEM data.
 
 class denoise_4DSTEM:
     """ 
-    ### 4D STEM denoiing
+    4D STEM denoiing
     
     This is the main class for denoising the dataset using unsupervised ML.
     
-    ### Unsupervised denoising
+    Unsupervised denoising
+    
     It is only natural to assume that noise is the common mode of all indipendent
     data points. This is different from outliers that are not going to be modeled.
     
     As such if there is a function that can map every data point to another, that
     function can only capture the noise that is common between all data points.
     
-    You can imagine this using a matrix made between all data points
-    of a set of 1-D data points where elements are the eucleadean distance of
-    every data points from one another. Then plot this in your mind in 3D. 
-    Now if the noise is not hetrosedastic,  this will look like a plane for 
+    One way to visualize this is to give the pair-wise error matrix for all pixels
+    and show it as an image, and then, trying to fit a planar model to such an image. 
+    If the noise is not hetrosedastic,  this will look like a plane for 
     a bell shaped type of PDF such as a Gaussian. Underfitting this with a plane 
     gives some noise model. Overfitting to it using a NN will give a better 
     boise model, especially if the noise is not modeled by a bell shaped or is 
@@ -42,7 +42,7 @@ class denoise_4DSTEM:
     
     Example
     -------
-        :Create a denoiser::
+        Create a denoiser
             import mcemtools.denoise_4DSTEM
             denoiser = mcemtools.denoise_4DSTEM(lr = 1e-3)
     """

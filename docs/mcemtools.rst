@@ -2,7 +2,7 @@ mcemtools package
 ============
 
 Module contents
-~--------------
+---------------
 
 .. automodule:: mcemtools
    :members:
