@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'Alireza.Sadri@monash.edu'
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 
 from .analysis import pyMSSE
 from .masking import annular_mask, image_by_windows, markimage

@@ -6,3 +6,9 @@ History
 ------------------
 
 * First release on PyPI.
+
+0.2.0 (2023-07-11)
+------------------
+
+* Many functions used for 4D-STEM analysis have been added.
+* OOP is avoided as much as possible.
