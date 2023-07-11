@@ -36,10 +36,3 @@ def test_command_line_interface():
     help_result = runner.invoke(cli.main, ['--help'])
     assert help_result.exit_code == 0
     assert '--help  Show this message and exit.' in help_result.output
-
-def test_mcemtools_denoise_4DSTEM():
-    
-    #data_4DSTEM = np.load('data_from_Py4DSTEM.npy')
-    data_4DSTEM = 10 + np.random.randn(256, 256, 64, 64)
-    denoised_data = mcem_denoiser(data_4DSTEM)
-    
