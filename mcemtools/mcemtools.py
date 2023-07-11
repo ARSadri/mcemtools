@@ -1,4 +1,6 @@
 import numpy as np
+from .masking import annular_mask
+from lognflow import printprogress
 
 def CoM4D(datacube : np.ndarray, 
           mask : np.ndarray = None, 
@@ -13,7 +15,7 @@ def CoM4D(datacube : np.ndarray,
     Args:
     ^^^^^^^
         :param datacube: np.ndarray 
-            the 4D-STEM data of shape (R_Nx, R_Ny, Q_Nx, Q_Ny)
+            the 4D-STEM data of shape (n_x, n_y, n_r, n_c)
         :param mask: np.ndarray
             a 2D array, optionally, calculate the CoM only in the areas 
             where mask==True
@@ -24,19 +26,19 @@ def CoM4D(datacube : np.ndarray,
         :returns: (2-tuple of 2d arrays), the center of mass coordinates, (x,y)
         :rtype: np.ndarray
     """
-    R_Nx, R_Ny, Q_Nx, Q_Ny = datacube.shape
+    n_x, n_y, n_r, n_c = datacube.shape
 
     if mask is None:
-        mask = np.ones((Q_Nx, Q_Ny))
+        mask = np.ones((n_r, n_c))
     else:
         assert len(mask.shape) == 2, 'mask should be 2d'
-        assert mask.shape[0] == Q_Nx, 'mask should have same shape as patterns'
-        assert mask.shape[1] == Q_Ny, 'mask should have same shape as patterns'
+        assert mask.shape[0] == n_r, 'mask should have same shape as patterns'
+        assert mask.shape[1] == n_c, 'mask should have same shape as patterns'
     
-    qy, qx = np.meshgrid(np.arange(Q_Ny), np.arange(Q_Nx))
-    qx_cube   = np.tile(qx,   (R_Nx, R_Ny, 1, 1))
-    qy_cube   = np.tile(qy,   (R_Nx, R_Ny, 1, 1))
-    mask_cube = np.tile(mask, (R_Nx, R_Ny, 1, 1))
+    qy, qx = np.meshgrid(np.arange(n_c), np.arange(n_r))
+    qx_cube   = np.tile(qx,   (n_x, n_y, 1, 1))
+    qy_cube   = np.tile(qy,   (n_x, n_y, 1, 1))
+    mask_cube = np.tile(mask, (n_x, n_y, 1, 1))
     mass = (datacube * mask_cube).sum(3).sum(2).astype('float')
     CoMx = (datacube * qx_cube * mask_cube).sum(3).sum(2).astype('float')
     CoMy = (datacube * qy_cube * mask_cube).sum(3).sum(2).astype('float')
@@ -73,7 +75,7 @@ def annular4D(data4D, radius = None, in_radius = None, centre = None):
     totI_ = I4D_cpy.sum(3).sum(2).squeeze()
     return totI_, PACBED_
 
-def annular_CoM4D(data4D, in_radius = None, out_radius = None, centre = None):
+def annular_CoM4D(data4D, radius = None, in_radius = None, centre = None):
     mask_ = annular_mask(
         (data4D.shape[2], data4D.shape[3]), 
         center = centre, radius = radius, in_radius = in_radius)
@@ -82,7 +84,7 @@ def annular_CoM4D(data4D, in_radius = None, out_radius = None, centre = None):
 
 def mask2D_to_4D(mask2D, data4D_shape):
     n_x, n_y, n_r, n_c = data4D_shape
-    assert len(mask.shape) == 2, 'mask should be 2d'
+    assert len(mask2D.shape) == 2, 'mask should be 2d'
     assert mask2D.shape[0] == n_r, 'mask should have same shape as patterns'
     assert mask2D.shape[1] == n_c, 'mask should have same shape as patterns'
         
@@ -115,40 +117,48 @@ def normalize_4DSTEM(data4D, mask2D):
 
 def cross_corr(data4D_a, data4D_b, mask2D):
     assert data4D_a.shape == data4D_b.shape
-    n_x, n_y, _, _ = data4D_a.shape
-    data4D_a = normalize_4DSTEM(data4D_a.copy(), mask2D)
-    data4D_b = normalize_4DSTEM(data4D_b.copy(), mask2D)
-    
-    mask4D = mask2D_to_4D(mask2D, data4D.shape)
+    n_x, n_y, n_r, n_c = data4D_a.shape
+
+    mask4D = mask2D_to_4D(mask2D, data4D_a.shape)
     mask4D[data4D_a == 0] = 0
     mask4D[data4D_b == 0] = 0
     mask4D = mask4D.reshape(n_x, n_y, n_r * n_c)
     mask4D = mask4D.reshape(n_x * n_y, n_r * n_c)
     dset_mask_sum_1 = mask4D.sum(1)
+
+    data4D_a = normalize_4DSTEM(data4D_a.copy(), mask2D)
+    data4D_b = normalize_4DSTEM(data4D_b.copy(), mask2D)
     
     corr_mat  = (data4D_a * data4D_b).sum(1)
     corr_mat[dset_mask_sum_1>0] /= dset_mask_sum_1[dset_mask_sum_1>0]
     corr_mat = corr_mat.reshape(n_x, n_y)
     return corr_mat
 
-def SymmSTEM(data4D, mask2D, nang = 180, mflag = 0):
+def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = 0,
+             verbose = True):
     
     from skimage.transform import warp_polar
     
-    realx,realy, _, _ = data4D.shape
-    corr_ang_auto = np.zeros((realx,realy,nang))
+    n_x, n_y, n_r, n_c = data4D.shape
+    
+    if mask2D is None:
+        mask2D = np.ones((n_r, n_c), dtype='int8')
+    
+    corr_ang_auto = np.zeros((n_x,n_y,nang))
     
     data4D = normalize_4DSTEM(data4D, mask2D)
-       
-    pBar = printprogress(realy * realx)
-    for i in range(realx):
-        for j in range(realy):
+    
+    if(verbose):
+        pBar = printprogress(n_x * n_y)
+    for i in range(n_x):
+        for j in range(n_y):
             vec_a = warp_polar(data4D[i,j] * mask2D).copy()
             rot = vec_a.copy()
             for _ang in range(nang):
                 corr_ang_auto[i,j, _ang] = (rot* vec_a).mean()
                 rot = np.roll(rot, 1, axis=0)
-            pBar()
+            if(verbose):
+                pBar()
     return corr_ang_auto
 
 def locate_atoms(data4D, min_distance = 3, filter_size = 3,

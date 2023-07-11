@@ -28,22 +28,21 @@ def annular_mask(image_shape : tuple,
             of a circle with center at center and radius radius are one and the rest
             are zero. We use equal or greater than for both radius and in_radius.
     """
-
+    n_r, n_c = image_shape
     if center is None: # use the middle of the image
-        center = (int(w/2), int(h/2))
+        center = (int(n_r/2), int(n_c/2))
     if radius is None: # use the smallest distance between the center and image walls
         radius = np.minimum(center[0], center[1])
 
-    Y, X = np.ogrid[:h, :w]
+    Y, X = np.ogrid[:n_r, :n_c]
     dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
 
     mask = dist_from_center <= radius
     
     if(in_radius is not None):
-        mask *= in_raius <= dist_from_center
+        mask *= in_radius <= dist_from_center
 
     return mask.astype('uint8') 
-
 
 class image_by_windows:
     def __init__(self, 
