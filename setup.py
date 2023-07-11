@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
-"""The setup script."""
+__version__ = '0.4.0'
 
-from mcemtools import __version__
+"""The setup script."""
 
 from setuptools import setup, find_packages
 
