@@ -2,7 +2,7 @@
 
 """The setup script."""
 
-_version = '0.3.0'
+from mcemtools import __version__
 
 from setuptools import setup, find_packages
 
@@ -48,6 +48,6 @@ setup(
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/arsadri/mcemtools',
-    version=_version,
+    version=__version__,
     zip_safe=False,
 )

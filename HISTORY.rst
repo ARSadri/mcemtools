@@ -18,3 +18,8 @@ History
 
 * Tests are increasing in number
 * init includes import of mcemtools
+
+0.4.0 (2023-07-11)
+------------------
+
+* Many small bugs are fixed
