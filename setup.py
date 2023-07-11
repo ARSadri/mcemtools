@@ -2,7 +2,7 @@
 
 """The setup script."""
 
-_version = '0.2.0'
+_version = '0.3.0'
 
 from setuptools import setup, find_packages
 
@@ -12,7 +12,7 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['Click>=7.0', ]
+requirements = ['numpy']
 
 test_requirements = ['pytest>=3', ]
 

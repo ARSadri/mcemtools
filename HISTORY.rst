@@ -12,3 +12,9 @@ History
 
 * Many functions used for 4D-STEM analysis have been added.
 * OOP is avoided as much as possible.
+
+0.3.0 (2023-07-11)
+------------------
+
+* Tests are increasing in number
+* init includes import of mcemtools
