@@ -23,3 +23,7 @@ History
 ------------------
 
 * Many small bugs are fixed
+
+0.5.0 (2023-07-12)
+------------------
+* Added binning to transforms

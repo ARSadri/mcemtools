@@ -29,7 +29,7 @@ def tensor_svd_denoise(data, rank):
 
     if len(data.shape) == 3:  # hyperspectral data case, directly feed data to svd_HO function
         [X, _, _] = svd_HO(data, rank)
-    if len(data.shape) == 4:    # Original 4D STEM data case, unfold reciprocal space dimensions into one dimension then feed to svd_HO function
+    if len(data.shape) == 4:
         data = np.reshape(data, [data.shape[0], data.shape[1], data.shape[2]*data.shape[3]])
         [X, _, _] = svd_HO(data, rank)
     

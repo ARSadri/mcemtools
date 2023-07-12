@@ -3,6 +3,16 @@ from matplotlib.widgets import RangeSlider, Slider
 from lognflow import select_file
 import numpy as np
 
+def mask2D_to_4D(mask2D, data4D_shape):
+    n_x, n_y, n_r, n_c = data4D_shape
+    assert len(mask2D.shape) == 2, 'mask should be 2d'
+    assert mask2D.shape[0] == n_r, 'mask should have same shape as patterns'
+    assert mask2D.shape[1] == n_c, 'mask should have same shape as patterns'
+        
+    _mask4D = np.array([np.array([mask2D.copy()])])
+    _mask4D = np.tile(_mask4D, (n_x, n_y, 1, 1))
+    return _mask4D
+
 def annular_mask(image_shape : tuple, 
                  center:tuple = None, radius:float=None, in_radius:float=None):
     """make a circle bianry pattern in a given window

@@ -1,5 +1,42 @@
 import numpy as np
 
+def bin4D(data4D, 
+          n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
+          method: str = 'linear'):
+    data4D = data4D.copy()
+    if(n_pos_in_bin > 1):
+        if(method == 'skip'):
+            data4D = data4D[
+                ::n_pos_in_bin, ::n_pos_in_bin]
+        if(method == 'linear'):
+            kern = np.full((n_pos_in_bin, n_pos_in_bin), fill_value = 1)
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+            for rcnt in range(data4D.shape[0]):
+                for ccnt in range(data4D.shape[1]):
+                    data4D[rcnt, ccnt] = \
+                        scipy.ndimage.convolve(
+                            data4D[rcnt, ccnt], kern)
+            data4D = data4D[
+                :, :, ::n_pos_in_bin, ::n_pos_in_bin]
+            
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+    if(n_pix_in_bin > 1):
+        if(method == 'skip'):
+            data4D = data4D[:, :, 
+                ::n_pix_in_bin, ::n_pix_in_bin]
+        if(method == 'linear'):
+            kern = np.full((n_pix_in_bin, n_pix_in_bin), fill_value = 1)
+            for rcnt in range(data4D.shape[0]):
+                for ccnt in range(data4D.shape[1]):
+                    data4D[rcnt, ccnt] = \
+                        scipy.ndimage.convolve(
+                            data4D[rcnt, ccnt], kern)
+            data4D = data4D[
+                :, :, ::n_pix_in_bin, ::n_pix_in_bin]
+    return data4D
+
 def get_polar_coords(n_rows, n_clms, centre):
         cc, rr = np.meshgrid(np.arange(n_rows), np.arange(n_clms))
     
@@ -134,6 +171,29 @@ def image2polar(data,
     polar_imageq[polar_maskq>0] /= polar_maskq[polar_maskq>0]
     
     return (polar_image, polar_imageq, polar_mask, polar_maskq)
+
+def normalize4D(data4D, mask2D):
+    data4D = data4D.copy()
+    n_x, n_y, n_r, n_c = data4D.shape
+    
+    mask4D = mask2D_to_4D(mask2D, data4D.shape)
+    mask4D[data4D == 0] = 0
+    mask4D = mask4D.reshape(n_x, n_y, n_r * n_c)
+    mask4D = mask4D.reshape(n_x * n_y, n_r * n_c)
+
+    data4D = data4D.reshape(n_x, n_y, n_r * n_c)
+    data4D = data4D.reshape(n_x * n_y, n_r * n_c)
+    
+    dset_mean = (data4D*mask4D).sum(1)
+    dset_mask_sum_1 = mask4D.sum(1)
+    dset_mean[dset_mask_sum_1 > 0] /= dset_mask_sum_1[dset_mask_sum_1>0]
+    data4D -= np.tile(np.array([dset_mean]).swapaxes(0,1), (1, n_r * n_c))
+    dset_std = (data4D ** 2).sum(1)
+    dset_std[dset_mask_sum_1 > 0] /= dset_mask_sum_1[dset_mask_sum_1>0]
+    dset_std = dset_std**0.5
+    dset_std_tile = np.tile(np.array([dset_std]).swapaxes(0,1), (1, n_r * n_c))
+    data4D[dset_std_tile>0] /= dset_std_tile[dset_std_tile>0]
+    return data4D
 
 if __name__ == '__main__':
     
