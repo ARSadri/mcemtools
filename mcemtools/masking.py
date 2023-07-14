@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RangeSlider, Slider
-from lognflow import select_file
 import numpy as np
 
 def mask2D_to_4D(mask2D, data4D_shape):
@@ -14,7 +13,7 @@ def mask2D_to_4D(mask2D, data4D_shape):
     return _mask4D
 
 def annular_mask(image_shape : tuple, 
-                 center:tuple = None, radius:float=None, in_radius:float=None):
+                 centre:tuple = None, radius:float=None, in_radius:float=None):
     """make a circle bianry pattern in a given window
     This simple function makes a circle filled with ones for where the circle is
     in a window and leaves the rest of the elements to remain zero.
@@ -22,7 +21,7 @@ def annular_mask(image_shape : tuple,
     ----------
         :param image_shape:
             a tuple of the shape of the image
-        :param center: 
+        :param centre: 
             tuple of two float scalars
             Intensity difference threshold.
         :param radius :
@@ -35,32 +34,37 @@ def annular_mask(image_shape : tuple,
     -------
         : np.ndarray of type uint8
             An image of size h x w where all elements that are closer to the origin
-            of a circle with center at center and radius radius are one and the rest
+            of a circle with centre at centre and radius radius are one and the rest
             are zero. We use equal or greater than for both radius and in_radius.
     """
     n_r, n_c = image_shape
-    if center is None: # use the middle of the image
-        center = (int(n_r/2), int(n_c/2))
-    if radius is None: # use the smallest distance between the center and image walls
-        radius = np.minimum(center[0], center[1])
+    if centre is None: # use the middle of the image
+        centre = (int(n_r/2), int(n_c/2))
+    if radius is None: # use the smallest distance between the centre and image walls
+        radius = np.minimum(centre[0], centre[1])
 
     Y, X = np.ogrid[:n_r, :n_c]
-    dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
+    dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 
-    mask = dist_from_center <= radius
+    mask = dist_from_centre <= radius
     
     if(in_radius is not None):
-        mask *= in_radius <= dist_from_center
+        mask *= in_radius <= dist_from_centre
 
     return mask.astype('uint8') 
 
 class image_by_windows:
     def __init__(self, 
-                 img_shape: tuple, 
+                 img_shape: tuple[int, int], 
                  win_shape: tuple[int, int] = (2, 2),
-                 skip: tuple[int, int] = (1, 1),
-                 compensate_epochs : bool = False):
+                 skip: tuple[int, int] = (1, 1)):
         """image by windows
+        
+            I am using OOP here because the user pretty much always wants to
+            transform results back to the original shape. It is different
+            from typical transforms, where the processing ends at the other
+            space.
+        
             Parameters
             ----------
             :param img_shape:
@@ -70,14 +74,10 @@ class image_by_windows:
                 the cropping windows shape
             :param skip:
                 The skipping length of windows
-            :param compensate_epochs:
-                Some pixels will be more visited than others. This is a way of
-                making a balance.
         """
         self.img_shape = img_shape
         self.win_shape = win_shape
         self.skip = skip
-        self.compensate_epochs = compensate_epochs
         n_r, n_c = img_shape[:2]
         rows = np.arange(0, n_r - win_shape[0] + 1, skip[0])
         clms = np.arange(0, n_c - win_shape[1] + 1, skip[1])
@@ -157,9 +157,9 @@ class markimage:
         self.im = axs[0].imshow(in_image, **kwargs_for_imshow)
         cm = self.im.get_cmap()
         _, bins, patches = axs[1].hist(in_image.flatten(), bins='auto')
-        bin_centers = 0.5 * (bins[:-1] + bins[1:])
+        bin_centres = 0.5 * (bins[:-1] + bins[1:])
         # scale values to interval [0,1]
-        col = bin_centers - min(bin_centers)
+        col = bin_centres - min(bin_centres)
         col /= max(col)
         for c, p in zip(col, patches):
             plt.setp(p, 'facecolor', cm(c))
@@ -254,7 +254,7 @@ class markimage:
             r = self.slider_r.val
             cx = self.slider_cx.val
             cy  = self.slider_cy.val
-            self.markshape.center = (cy, cx)
+            self.markshape.centre = (cy, cx)
             self.markshape.set_radius(r)
             
         if(self.mark_shape == 'rectangle'):
@@ -272,8 +272,3 @@ class markimage:
                 self.slider_s_bot_right_c.val - self.slider_top_left_c.val)
 
         self.fig.canvas.draw_idle()
-
-if __name__ == '__main__':
-    in_image = np.load(select_file())
-    markimage(in_image, 'circle', cmap = 'jet')
-    # markimage(in_image, 'rectangle', cmap = 'gray')

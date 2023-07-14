@@ -1,7 +1,13 @@
 import numpy as np
+from .masking import annular_mask, mask2D_to_4D
+from .transforms import normalize_4D
+from lognflow import printprogress
+from skimage.transform import warp_polar
 
-def pyMSSE(res, MSSE_LAMBDA = 3, k = 12) -> tuple:
-    res_sq_sorted = np.sort(res**2)
+def pyMSSE(fitting_errors, MSSE_LAMBDA = 3, k = 12) -> tuple:
+    res_sq = fitting_errors**2
+    res_sq_sortinds = np.argsort(res_sq)
+    res_sq_sorted = res_sq[res_sq_sortinds]
     res_sq_cumsum = np.cumsum(res_sq_sorted)
     cumsums = res_sq_cumsum[:-1]/np.arange(1, res_sq_cumsum.shape[0])
     cumsums[cumsums==0] = cumsums[cumsums>0].min()
@@ -16,50 +22,68 @@ def pyMSSE(res, MSSE_LAMBDA = 3, k = 12) -> tuple:
             est_done = True
     if (not est_done):
         est_std = cumsums[-1] ** 0.5
-        n_inliers = res.shape[0]
-    return (est_std, n_inliers, adjacencies, inds)
+        n_inliers = fitting_errors.shape[0]
+    return (est_std, n_inliers, adjacencies, res_sq_sortinds)
 
+def sum_4D(data4D, mask4D = None):
+    """ Annular virtual detector
+            Given a 4D dataset, n_x x n_y x n_r x n_c.
+            the output is the marginalized images over the n_x, n_y or n_r,n_c
+        
+        :param data4D:
+            data in 4 dimension real_x x real_y x k_r x k_c
+        :param mask4D: np.ndarray
+            a 4D array, optionally, calculate the CoM only in the areas 
+            where mask==True
+    """
+    if mask4D is not None:
+        assert mask4D.shape == data4D.shape,\
+            'mask4D should have the same shape as data4D'
+    
+    I4D_cpy = data4D.copy()
+    I4D_cpy[mask4D == 0] = 0
+    PACBED = I4D_cpy.sum(1).sum(0).squeeze()
+    totI = I4D_cpy.sum(3).sum(2).squeeze()
+    return totI, PACBED
 
-def CoM4D(datacube : np.ndarray, 
-          mask : np.ndarray = None, 
-          normalize : bool=True):
+def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
     """ modified from py4DSTEM
-    I wish they had written it like this
-    Calculates two images - center of mass x and y - from a 4D-STEM datacube.
-
-    The centers of mass are returned in units of pixels and in the Qx/Qy detector
-    coordinate system.
+    I wish they had written it as follows
+    Calculates two images - centre of mass x and y - from a 4D data4D.
 
     Args:
     ^^^^^^^
-        :param datacube: np.ndarray 
+        :param data4D: np.ndarray 
             the 4D-STEM data of shape (n_x, n_y, n_r, n_c)
-        :param mask: np.ndarray
-            a 2D array, optionally, calculate the CoM only in the areas 
+        :param mask4D: np.ndarray
+            a 4D array, optionally, calculate the CoM only in the areas 
             where mask==True
         :param normalize: bool
             if true, subtract off the mean of the CoM images
     Returns:
     ^^^^^^^
-        :returns: (2-tuple of 2d arrays), the center of mass coordinates, (x,y)
+        :returns: (2-tuple of 2d arrays), the centre of mass coordinates, (x,y)
         :rtype: np.ndarray
     """
-    n_x, n_y, n_r, n_c = datacube.shape
+    n_x, n_y, n_r, n_c = data4D.shape
 
-    if mask is None:
-        mask = np.ones((n_r, n_c))
-    else:
-        assert len(mask.shape) == 2, 'mask should be 2d'
-        assert mask.shape[0] == n_r, 'mask should have same shape as patterns'
-        assert mask.shape[1] == n_c, 'mask should have same shape as patterns'
+    if mask4D is not None:
+        assert mask4D.shape == data4D.shape,\
+            'mask4D should have the same shape as data4D'
     
-    qy, qx = np.meshgrid(np.arange(n_c), np.arange(n_r))
-    qx_cube   = np.tile(qx,   (n_x, n_y, 1, 1))
-    qy_cube   = np.tile(qy,   (n_x, n_y, 1, 1))
-    mask_cube = np.tile(mask, (n_x, n_y, 1, 1))
-    mass = (datacube * mask_cube).sum(3).sum(2).astype('float')
-    CoMx = (datacube * qx_cube * mask_cube).sum(3).sum(2).astype('float')
-    CoMy = (datacube * qy_cube * mask_cube).sum(3).sum(2).astype('float')
+    clm_grid, row_grid = np.meshgrid(np.arange(n_c), np.arange(n_r))
+    row_grid_cube   = np.tile(row_grid,   (n_x, n_y, 1, 1))
+    clm_grid_cube   = np.tile(clm_grid,   (n_x, n_y, 1, 1))
+    
+    if mask4D is not None:
+        mass = (data4D * mask_cube).sum(3).sum(2).astype('float')
+        CoMx = (data4D * row_grid_cube * mask_cube).sum(3).sum(2).astype('float')
+        CoMy = (data4D * clm_grid_cube * mask_cube).sum(3).sum(2).astype('float')
+    else:
+        mass = data4D.sum(3).sum(2).astype('float')
+        CoMx = (data4D * row_grid_cube).sum(3).sum(2).astype('float')
+        CoMy = (data4D * clm_grid_cube).sum(3).sum(2).astype('float')
+        
     CoMx[mass!=0] = CoMx[mass!=0] / mass[mass!=0]
     CoMy[mass!=0] = CoMy[mass!=0] / mass[mass!=0]
 
@@ -69,78 +93,49 @@ def CoM4D(datacube : np.ndarray,
 
     return CoMx, CoMy
 
-def annular4D(data4D, radius = None, in_radius = None, centre = None):
-    """ Annular virtual detector
-            Given a 4D dataset, n_x x n_y x n_r x n_c.
-            the output is the marginalized images over the n_x, n_y or n_r,n_c
-        
-        :param data4D:
-            data in 4 dimension real_x x real_y x k_r x k_c
-        :param radius:
-            inside radius from zero to inf, default: 0
-        :param in_radius:
-            outside radius from zero to inf,default : inf
-        :param centre:
-            a tuple for the centre of the circular mask
-            
-    """
-    mask_ = annular_mask(
-        (data4D.shape[2], data4D.shape[3]), 
-        center = centre, radius = radius, in_radius = in_radius)
-    I4D_cpy = data4D.copy()
-    I4D_cpy[:, :, mask_ == 0] = 0
-    PACBED_ = I4D_cpy.sum(1).sum(0).squeeze()
-    totI_ = I4D_cpy.sum(3).sum(2).squeeze()
-    return totI_, PACBED_
-
-def annular_CoM4D(data4D, radius = None, in_radius = None, centre = None):
-    mask_ = annular_mask(
-        (data4D.shape[2], data4D.shape[3]), 
-        center = centre, radius = radius, in_radius = in_radius)
-    I4D_CoMx, I4D_CoMy = CoM4D(data4D, mask_)
-    return I4D_CoMx, I4D_CoMy
-
-def cross_corr(data4D_a, data4D_b, mask2D):
-    assert data4D_a.shape == data4D_b.shape
-    n_x, n_y, n_r, n_c = data4D_a.shape
-
-    mask4D = mask2D_to_4D(mask2D, data4D_a.shape)
-    mask4D[data4D_a == 0] = 0
-    mask4D[data4D_b == 0] = 0
-    mask4D = mask4D.reshape(n_x, n_y, n_r * n_c)
-    mask4D = mask4D.reshape(n_x * n_y, n_r * n_c)
-    dset_mask_sum_1 = mask4D.sum(1)
-
-    data4D_a = normalize4D(data4D_a.copy(), mask2D)
-    data4D_b = normalize4D(data4D_b.copy(), mask2D)
+def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
     
-    corr_mat  = (data4D_a * data4D_b).sum(1)
-    corr_mat[dset_mask_sum_1>0] /= dset_mask_sum_1[dset_mask_sum_1>0]
-    corr_mat = corr_mat.reshape(n_x, n_y)
+    assert data4D_a.shape == data4D_b.shape, \
+        'data4D_a should have same shape as data4D_b'
+    if mask4D is not None:
+        assert mask4D.shape == data4D.shape,\
+            'mask4D should have the same shape as data4D'
+
+    data4D_a = normalize_4D(data4D_a.copy(), mask4D)
+    data4D_b = normalize_4D(data4D_b.copy(), mask4D)
+    corr_mat  = (data4D_a * data4D_b).sum(3).sum(2)
+    
+    if mask4D is not None:
+        mask_STEM = mask4D.sum(3).sum(2)
+        corr_mat[mask_STEM>0] /= mask_STEM[mask_STEM>0]
     return corr_mat
 
-def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = 0,
-             verbose = True):
-    
-    from skimage.transform import warp_polar
+def SymmSTEM(data4D, mask4D = None, nang = 180, mflag = 0, verbose = True):
     
     n_x, n_y, n_r, n_c = data4D.shape
     
-    if mask2D is None:
-        mask2D = np.ones((n_r, n_c), dtype='int8')
+    if mask4D is not None:
+        assert mask4D.shape == data4D.shape,\
+            'mask4D should have the same shape as data4D'
     
     corr_ang_auto = np.zeros((n_x,n_y,nang))
     
-    data4D = normalize4D(data4D, mask2D)
+    data4D = normalize_4D(data4D, mask4D)
+    n_unmasked = 1
     
     if(verbose):
-        pBar = printprogress(n_x * n_y)
+        pBar = printprogress(
+            n_x * n_y, title = f'Symmetry STEM for {n_x * n_y} patterns')
     for i in range(n_x):
         for j in range(n_y):
-            vec_a = warp_polar(data4D[i,j] * mask2D).copy()
+            if mask4D is not None:
+                vec_a = warp_polar(data4D[i, j] * mask4D[i, j]).copy()
+                n_unmasked = mask4D[i, j].sum()
+            else:
+                vec_a = warp_polar(data4D[i, j].copy())
             rot = vec_a.copy()
             for _ang in range(nang):
-                corr_ang_auto[i,j, _ang] = (rot* vec_a).mean()
+                corr_ang_auto[i,j, _ang] = (rot * vec_a).sum() / n_unmasked
                 rot = np.roll(rot, 1, axis=0)
             if(verbose):
                 pBar()

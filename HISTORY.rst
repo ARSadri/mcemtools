@@ -27,3 +27,8 @@ History
 0.5.0 (2023-07-12)
 ------------------
 * Added binning to transforms
+
+0.6.0 (2023-07-15)
+------------------
+* More tests are added
+* Names are consistant accross the package.

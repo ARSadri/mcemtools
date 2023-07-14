@@ -1,5 +1,5 @@
 import numpy as np
-from .masking import annular_mask, mask2D_to_4D
+import matplotlib.pyplot as plt
 from lognflow import printprogress
 
 def locate_atoms(data4D, min_distance = 3, filter_size = 3,
@@ -26,7 +26,7 @@ def locate_atoms(data4D, min_distance = 3, filter_size = 3,
         coordinates = coordinates[inds]
     return coordinates
 
-def fig2data(fig):
+def pltfig_to_numpy(fig):
     """ from https://www.icare.univ-lille.fr/how-to-
                     convert-a-matplotlib-figure-to-a-numpy-array-or-a-pil-image/
     """
@@ -39,12 +39,12 @@ def fig2data(fig):
 
 def numbers_as_images(dataset_shape, fontsize, verbose = False):
     """ Numbers4D
-    This scripts generates a 4D dataset of images with shape
+    This function generates a 4D dataset of images with shape
     (n_x, n_y, n_r, n_c) where in each image the value "x, y" is written as a text
-    that fills the image. As such later when working with such a dataset you can
-    look at the image and know which index it had before you using it.
+    that fills the image. As such, later when working with such a dataset you can
+    look at the image and know which index it had before you use it.
     
-    Follow this receip to make good images:
+    Follow this recipe to make good images:
     
     1- set n_x, n_y to 10, Set the desired n_r and width. 
     2- try fontsize that is the largest
@@ -73,7 +73,7 @@ def numbers_as_images(dataset_shape, fontsize, verbose = False):
             ax.text(mat.shape[0]//2 - fontsize, mat.shape[1]//2 ,
                     number_text, fontsize = fontsize)
             ax.axis('off')
-            buf = fig2data (fig)
+            buf = pltfig_to_numpy(fig)
             plt.close()
             buf2 = buf[::buf.shape[0]//n_r, ::buf.shape[1]//n_c, :3].mean(2)
             buf2 = buf2[:n_r, :n_c]

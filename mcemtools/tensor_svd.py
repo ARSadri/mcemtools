@@ -1,3 +1,8 @@
+"""
+This code is modified from Tensor SVD repo for mcemtools
+ 
+"""
+
 import numpy as np
 from sklearn.utils.extmath import randomized_svd
 
@@ -85,7 +90,8 @@ def svd_HO(data, rank, max_iter=10):
     X = data
     for k in ordered_indexes: # calculating initial SVD
         unfolded = unfold_axis(X, k) # unfolding from the axis with minimum size
-        [U[k], _ , _] = randomized_svd(unfolded,rank[k],n_iter=svd_iter)
+        [U[k], _ , _] = randomized_svd(unfolded,rank[k],n_iter=svd_iter,
+                                       random_state = None)
         X = ttm(X, np.transpose(U[k]), k) # This needs to be fixed!
 
     ## Update U with HOOI
@@ -99,7 +105,8 @@ def svd_HO(data, rank, max_iter=10):
             for j in minus_k:
                 Y = ttm(Y, np.transpose(U[j]), j)
             MY = unfold_axis(Y, k)
-            [U[k], _, _] = randomized_svd(MY, rank[k],n_iter=svd_iter)
+            [U[k], _, _] = randomized_svd(MY, rank[k],n_iter=svd_iter,
+                                          random_state = None)
 
     ## Use the determined U matrices to calculate core tensor and denoised tensor
     X = data
@@ -161,7 +168,8 @@ def svd_fit(data, rank, max_iter=10):
     X = data
     for k in ordered_indexes: # calculating initial SVD
         unfolded = unfold_axis(X, k) # unfolding from the axis with minimum size
-        [U[k], _ , _] = randomized_svd(unfolded,rank[k],n_iter=svd_iter)
+        [U[k], _ , _] = randomized_svd(unfolded,rank[k],n_iter=svd_iter,
+                                       random_state = None)
         X = ttm(X, np.transpose(U[k]), k) # This needs to be fixed!
 
     ## Update U with HOOI
@@ -175,7 +183,8 @@ def svd_fit(data, rank, max_iter=10):
             for j in minus_k:
                 Y = ttm(Y, np.transpose(U[j]), j)
             MY = unfold_axis(Y, k)
-            [U[k], _, _] = randomized_svd(MY, rank[k],n_iter=svd_iter)
+            [U[k], _, _] = randomized_svd(MY, rank[k],n_iter=svd_iter,
+                                          random_state = None)
 
     return U, ordered_indexes
 
@@ -290,7 +299,9 @@ def scree_plots(t, ndim = []):
     scree = []
     for i in range(total_dim):
         t_unfold = unfold_axis(t, i)
-        [ _, e, _ ] = randomized_svd(np.matmul(t_unfold,np.transpose(t_unfold)),ndim[i],n_iter=15)
+        [ _, e, _ ] = randomized_svd(
+            np.matmul(t_unfold,np.transpose(t_unfold)),ndim[i],n_iter=15,
+            random_state = None)
         e = np.sqrt(e)
         e = np.real(e)
         scree.append(e)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = '0.5.0'
+__version__ = '0.6.0'
 
 """The setup script."""
 
@@ -12,7 +12,9 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['numpy']
+requirements = ['numpy', 'matplotlib', 'scipy', 
+                'scikit-learn', 'scikit-image',
+                'lognflow', 'RobustGaussianFittingLibrary']
 
 test_requirements = ['pytest>=3', ]
 
@@ -48,6 +50,6 @@ setup(
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/arsadri/mcemtools',
-    version=__version__,
+    version = __version__,
     zip_safe=False,
 )
