@@ -182,7 +182,7 @@ class markimage:
             cy = cy / 2
             circle_radius = cx if cx < cy else cy
             sl1 = plt.axes([0.25, 0.15, 0.6, 0.03])
-            sl2 = plt.axes([0.25, 0.1, 0.6, 0.03])
+            sl2 = plt.axes([0.25, 0.1,  0.6, 0.03])
             sl3 = plt.axes([0.25, 0.05, 0.6, 0.03])
             self.markshape = plt.Circle((cy,cx), circle_radius, ec="k", fc = 'None')
             axs[0].add_patch(self.markshape)
@@ -254,7 +254,7 @@ class markimage:
             r = self.slider_r.val
             cx = self.slider_cx.val
             cy  = self.slider_cy.val
-            self.markshape.centre = (cy, cx)
+            self.markshape.set_centre((cy, cx))
             self.markshape.set_radius(r)
             
         if(self.mark_shape == 'rectangle'):
@@ -263,9 +263,9 @@ class markimage:
             self.slider_bot_right_r.val
             self.slider_s_bot_right_c.val
 
-            self.markshape.xy = (
+            self.markshape.set_xy = ((
                 self.slider_top_left_r.val,
-                self.slider_top_left_c.val)
+                self.slider_top_left_c.val))
             self.markshape.set_width(
                 self.slider_bot_right_r.val - self.slider_top_left_r.val)
             self.markshape.set_height(

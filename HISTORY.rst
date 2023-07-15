@@ -28,7 +28,11 @@ History
 ------------------
 * Added binning to transforms
 
-0.6.0 (2023-07-15)
+0.6.0 (2023-07-14)
 ------------------
 * More tests are added
 * Names are consistant accross the package.
+
+0.7.0 (2023-07-15)
+------------------
+* markimage bug is fixed
