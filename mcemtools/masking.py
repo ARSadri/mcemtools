@@ -56,7 +56,7 @@ def annular_mask(image_shape : tuple,
 class image_by_windows:
     def __init__(self, 
                  img_shape: tuple[int, int], 
-                 win_shape: tuple[int, int] = (2, 2),
+                 win_shape: tuple[int, int],
                  skip: tuple[int, int] = (1, 1)):
         """image by windows
         
@@ -254,7 +254,7 @@ class markimage:
             r = self.slider_r.val
             cx = self.slider_cx.val
             cy  = self.slider_cy.val
-            self.markshape.set_centre((cy, cx))
+            self.markshape.set_center((cy, cx))
             self.markshape.set_radius(r)
             
         if(self.mark_shape == 'rectangle'):

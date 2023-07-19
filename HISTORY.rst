@@ -36,3 +36,9 @@ History
 0.7.0 (2023-07-15)
 ------------------
 * markimage bug is fixed
+
+0.8.0 (2023-07-19)
+------------------
+* markimage bug is fixed really as US version of centre is center.
+* napari based GUI is added to mcemtools.
+* bianary files can be read too.

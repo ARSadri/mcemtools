@@ -36,7 +36,12 @@ def test_pltfig_to_numpy():
     np_data = mcemtools.pltfig_to_numpy(fig)
     print(np_data.shape)
 
+def test_viewer_4D():
+    data4D = np.random.rand(32, 16, 24, 16)
+    mcemtools.viewer_4D(data4D)
+
 if __name__ == '__main__':
     test_numbers_as_images()
     test_locate_atoms()
     test_pltfig_to_numpy()
+    test_viewer_4D()

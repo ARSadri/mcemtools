@@ -98,8 +98,8 @@ def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
     assert data4D_a.shape == data4D_b.shape, \
         'data4D_a should have same shape as data4D_b'
     if mask4D is not None:
-        assert mask4D.shape == data4D.shape,\
-            'mask4D should have the same shape as data4D'
+        assert mask4D.shape == data4D_a.shape,\
+            'mask4D should have the same shape as data4D_a'
 
     data4D_a = normalize_4D(data4D_a.copy(), mask4D)
     data4D_b = normalize_4D(data4D_b.copy(), mask4D)

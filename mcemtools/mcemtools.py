@@ -1,6 +1,8 @@
 import numpy as np
+import pathlib
 import matplotlib.pyplot as plt
 from lognflow import printprogress
+from .analysis import sum_4D
 
 def locate_atoms(data4D, min_distance = 3, filter_size = 3,
                  reject_too_close = False):
@@ -81,3 +83,98 @@ def numbers_as_images(dataset_shape, fontsize, verbose = False):
             if(verbose):
                 pBar()
     return dataset
+
+import re,os,numpy as np
+
+def open_muSTEM_binary(filename):
+    '''opens binary with name filename outputted from the muSTEM software
+        This peice of code is modified from muSTEM repo.
+    '''
+    filename = pathlib.Path(filename)
+    assert filename.is_file(), f'{filename.absolute()} does not exist'
+    m = re.search('([0-9]+)x([0-9]+)',filename)
+    if m:
+        y = int(m.group(2))
+        x = int(m.group(1))
+    #Get file size and intuit datatype
+    size =  os.path.getsize(filename)
+    if (size/(y*x) == 4):
+        d_type = '>f4'
+    elif(size/(y*x) == 8):
+        d_type = '>f8'
+    #Read data and reshape as required.
+    return np.reshape(np.fromfile(filename, dtype = d_type),(y,x))
+
+class viewer_4D:
+    def __init__(self, data4D):
+        import napari
+        self.data4D = data4D
+        self.data4D_shape = self.data4D.shape
+        self.data4D_shape_list = np.array(self.data4D_shape)
+        self.viewers_list = [napari.Viewer(), napari.Viewer()]
+        self.viewers_list[0].add_image(self.data4D.sum(1).sum(0).squeeze())
+        self.viewers_list[1].add_image(self.data4D.sum(3).sum(2).squeeze())
+
+        # self.viewers_list[0].bind_key(key = 'n', func = self.get_shape_info0)
+        # self.viewers_list[1].bind_key(key = 'n', func = self.get_shape_info1)
+        
+        self.viewers_list[0].mouse_drag_callbacks.append(self.get_shape_info0)
+        self.viewers_list[1].mouse_drag_callbacks.append(self.get_shape_info1)
+        
+        napari.run()
+        
+    def get_mask(self, shape_layer, viewer_axis):
+        from skimage.draw import polygon2mask
+        mask4D = np.ones(self.data4D_shape, dtype='int8')
+
+        data4D_shape_select = tuple(
+            self.data4D_shape_list[np.array(viewer_axis)])
+        mask2D = shape_layer.to_labels(data4D_shape_select) > 0
+        if mask2D.sum() > 0:
+            for shape_cnt in range(len(shape_layer.data)):
+                if shape_layer.shape_type[shape_cnt] == 'path':
+                    pt_data = shape_layer.data[shape_cnt]
+                    mask2D += polygon2mask(data4D_shape_select ,pt_data)
+            if(viewer_axis[0] == 0):
+                mask4D[mask2D==0, :, :] = 0
+            if(viewer_axis[0] == 2):
+                mask4D[:, :, mask2D==0] = 0
+        return mask4D
+            
+    def get_shape_info0(self, viewer, event):
+        dragged = False
+        yield
+        while event.type == 'mouse_move':
+            # print(event.position)
+            dragged = True
+            yield
+        if dragged:
+            # print('drag end')
+            try:
+                mask4D = self.get_mask(viewer.layers[1], (2, 3))
+            except:
+                mask4D = np.ones(self.data4D.shape,dtype='int8')
+            totI, _ = sum_4D(self.data4D, mask4D)
+            self.viewers_list[1].layers[0].data = totI
+            print('STEM updated')
+            
+        
+    def get_shape_info1(self, viewer, event):
+        dragged = False
+        yield
+        while event.type == 'mouse_move':
+            # print(event.position)
+            dragged = True
+            yield
+        if dragged:
+            # print('drag end')
+            try:
+                mask4D = self.get_mask(viewer.layers[1], (0, 1))
+            except:
+                mask4D = np.ones(self.data4D.shape,dtype='int8')
+            _, PACBED = sum_4D(self.data4D, mask4D)
+            self.viewers_list[0].layers[0].data = PACBED
+            print('PACBED updated')
+            
+            
+            
