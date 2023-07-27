@@ -1,8 +1,9 @@
 import numpy as np
 import pathlib
 import matplotlib.pyplot as plt
-from lognflow import printprogress
-from .analysis import sum_4D
+from lognflow import printprogress, select_directory, lognflow
+from .analysis import sum_4D, swirl_and_sum
+from .masking import mask2D_to_4D
 
 def locate_atoms(data4D, min_distance = 3, filter_size = 3,
                  reject_too_close = False):
@@ -106,7 +107,7 @@ def open_muSTEM_binary(filename):
     return np.reshape(np.fromfile(filename, dtype = d_type),(y,x))
 
 class viewer_4D:
-    def __init__(self, data4D):
+    def __init__(self, data4D, logger = print):
         import napari
         self.data4D = data4D
         self.data4D_shape = self.data4D.shape
@@ -115,66 +116,119 @@ class viewer_4D:
         self.viewers_list[0].add_image(self.data4D.sum(1).sum(0).squeeze())
         self.viewers_list[1].add_image(self.data4D.sum(3).sum(2).squeeze())
 
-        # self.viewers_list[0].bind_key(key = 'n', func = self.get_shape_info0)
-        # self.viewers_list[1].bind_key(key = 'n', func = self.get_shape_info1)
+        self.viewers_list[0].bind_key(
+            key = 'Control-i', func = self.print_shape_info)
+        self.viewers_list[1].bind_key(
+            key = 'Control-i', func = self.print_shape_info)
         
-        self.viewers_list[0].mouse_drag_callbacks.append(self.get_shape_info0)
-        self.viewers_list[1].mouse_drag_callbacks.append(self.get_shape_info1)
+        self.viewers_list[0].bind_key(
+            key = 'Control-Shift-s', func = self.save)
+        self.viewers_list[1].bind_key(
+            key = 'Control-Shift-s', func = self.save)
         
+        self.viewers_list[0].bind_key(
+            key = 'F5', func = self.update_by_masked_sum_4D)
+        self.viewers_list[1].bind_key(
+            key = 'F5', func = self.update_by_masked_sum_4D)
+        self.viewers_list[0].mouse_drag_callbacks.append(self.mouse_drag_event)
+        self.viewers_list[1].mouse_drag_callbacks.append(self.mouse_drag_event)
+        
+        self.mask2D_list = []
+        self.mask2D_list.append(np.ones(
+            (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
+        self.mask2D_list.append(np.ones(
+            (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
+        self.logger = logger
         napari.run()
-        
-    def get_mask(self, shape_layer, viewer_axis):
+    
+    def save(self, viewer):
+        if isinstance(self.logger, lognflow):
+            assert self.logger, 'logger does not point to a valid directory.'
+            self.logger.log_imshow('masks/mask2D_0', self.mask2D_list[0])
+            self.logger.log_single('masks/mask2D_0', self.mask2D_list[0])
+            self.logger.log_imshow('masks/mask2D_1', self.mask2D_list[1])
+            self.logger.log_single('masks/mask2D_1', self.mask2D_list[1])
+    
+    def get_mask2D(self, shape_layer, mask_shape):
         from skimage.draw import polygon2mask
-        mask4D = np.ones(self.data4D_shape, dtype='int8')
-
-        data4D_shape_select = tuple(
-            self.data4D_shape_list[np.array(viewer_axis)])
-        mask2D = shape_layer.to_labels(data4D_shape_select) > 0
-        if mask2D.sum() > 0:
-            for shape_cnt in range(len(shape_layer.data)):
-                if shape_layer.shape_type[shape_cnt] == 'path':
-                    pt_data = shape_layer.data[shape_cnt]
-                    mask2D += polygon2mask(data4D_shape_select ,pt_data)
-            if(viewer_axis[0] == 0):
-                mask4D[mask2D==0, :, :] = 0
-            if(viewer_axis[0] == 2):
-                mask4D[:, :, mask2D==0] = 0
-        return mask4D
-            
-    def get_shape_info0(self, viewer, event):
-        dragged = False
-        yield
-        while event.type == 'mouse_move':
-            # print(event.position)
-            dragged = True
-            yield
-        if dragged:
-            # print('drag end')
-            try:
-                mask4D = self.get_mask(viewer.layers[1], (2, 3))
-            except:
-                mask4D = np.ones(self.data4D.shape,dtype='int8')
-            totI, _ = sum_4D(self.data4D, mask4D)
-            self.viewers_list[1].layers[0].data = totI
-            print('STEM updated')
-            
+        from scipy.ndimage import binary_dilation, binary_fill_holes
+        mask2D = np.zeros(mask_shape, dtype='int8')
         
-    def get_shape_info1(self, viewer, event):
+        label2D = shape_layer.to_labels(mask_shape)
+        if label2D.sum() > 0:
+            for shape_cnt in range(len(shape_layer.data)):
+                _mask2D = np.ones(mask_shape, dtype='int8')
+                sh_width = int(shape_layer.edge_width[shape_cnt])
+                sh_type = shape_layer.shape_type[shape_cnt]
+                if sh_type == 'path':
+                    if (sh_width < 2):
+                        pt_data = shape_layer.data[shape_cnt]
+                        _mask2D = polygon2mask(mask_shape ,pt_data)
+                    else:
+                        _mask2D = label2D.copy()
+                        _mask2D[_mask2D != shape_cnt + 1] = 0
+                else:
+                    _mask2D = label2D.copy()
+                    _mask2D[_mask2D != shape_cnt + 1] = 0
+                if sh_width == 2:
+                    _mask2D_swirl_sum = swirl_and_sum(_mask2D)
+                    _mask2D_swirl_sum[_mask2D_swirl_sum >= 7] = 0
+                    _mask2D_swirl_sum[_mask2D_swirl_sum>0] = 1
+                    _mask2D = _mask2D_swirl_sum.copy()
+                elif sh_width > 2:
+                    _mask2D_swirl_sum = swirl_and_sum(_mask2D)
+                    _mask2D_swirl_sum[_mask2D_swirl_sum >= 4] = 0
+                    _mask2D_swirl_sum[_mask2D_swirl_sum>0] = 1
+                    if sh_width == 3:
+                        switers = 1
+                    else:
+                        switers = sh_width // 2
+                    if sh_width / 2.0 != sh_width // 2:
+                        _mask2D = binary_dilation(
+                            _mask2D_swirl_sum, iterations = switers)
+                    else:
+                        _mask2D = binary_dilation(
+                            _mask2D_swirl_sum, iterations = switers - 1)
+                        _mask2D_filled_out = binary_fill_holes(_mask2D)
+                        _mask2D_filled_out[_mask2D == 1] = 0
+                        _mask2D_filled_out = 1 - _mask2D_filled_out
+                        _erroded = binary_dilation(_mask2D_filled_out)
+                        _erroded[_mask2D_filled_out == 1] = 0
+                        _mask2D[_erroded == 1] = 1
+                mask2D[_mask2D > 0] = 1
+        else:
+            mask2D += 1
+        return mask2D
+                
+    def update_by_masked_sum_4D(self, viewer, *args, **kwargs):
+        viewer_index = self.viewers_list.index(viewer)
+        if(len(viewer.layers) > 1):
+            data4D_shape_select = viewer.layers[0].data.shape
+            mask2D = self.get_mask2D(viewer.layers[1], data4D_shape_select)
+            if( (self.mask2D_list[viewer_index] != mask2D).sum()>0):
+                self.mask2D_list.__setitem__(viewer_index, mask2D.copy())
+                mask4D = np.zeros(self.data4D_shape, dtype='int8')
+                if(viewer_index == 0):
+                    mask4D[:, :, mask2D==1] = 1
+                    STEM_img, PACBED = sum_4D(self.data4D, mask4D)
+                    self.viewers_list[1].layers[0].data = STEM_img
+                    self.logger('STEM image updated')
+                if(viewer_index == 1):
+                    mask4D[mask2D==1, :, :] = 1
+                    STEM_img, PACBED = sum_4D(self.data4D, mask4D)
+                    self.viewers_list[0].layers[0].data = PACBED
+                    self.logger('PACBED image updated')
+
+    def mouse_drag_event(self, viewer, event):
         dragged = False
         yield
         while event.type == 'mouse_move':
-            # print(event.position)
             dragged = True
             yield
         if dragged:
-            # print('drag end')
-            try:
-                mask4D = self.get_mask(viewer.layers[1], (0, 1))
-            except:
-                mask4D = np.ones(self.data4D.shape,dtype='int8')
-            _, PACBED = sum_4D(self.data4D, mask4D)
-            self.viewers_list[0].layers[0].data = PACBED
-            print('PACBED updated')
+            self.update_by_masked_sum_4D(viewer)
             
-            
-            
+    def print_shape_info(self, viewer):
+        self.logger(f'shape_type:{viewer.layers[1].shape_type}')
+        self.logger(f'data:{viewer.layers[1].data}')
+        self.logger(f'edge_width:{viewer.layers[1].edge_width}')

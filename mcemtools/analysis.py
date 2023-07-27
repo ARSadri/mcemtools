@@ -25,6 +25,20 @@ def pyMSSE(fitting_errors, MSSE_LAMBDA = 3, k = 12) -> tuple:
         n_inliers = fitting_errors.shape[0]
     return (est_std, n_inliers, adjacencies, res_sq_sortinds)
 
+def swirl_and_sum(img):
+    _img = np.zeros(img.shape, dtype = img.dtype)
+    _img[1:-1, 1:-1] = \
+          img[ :-2,  :-2] \
+        + img[ :-2, 1:-1] \
+        + img[ :-2, 2:  ] \
+        + img[1:-1,  :-2] \
+        + img[1:-1, 1:-1] \
+        + img[1:-1, 2:  ] \
+        + img[2:  ,  :-2] \
+        + img[2:  , 1:-1] \
+        + img[2:  , 2:  ]
+    return _img
+    
 def sum_4D(data4D, mask4D = None):
     """ Annular virtual detector
             Given a 4D dataset, n_x x n_y x n_r x n_c.

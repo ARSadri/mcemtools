@@ -42,3 +42,7 @@ History
 * markimage bug is fixed really as US version of centre is center.
 * napari based GUI is added to mcemtools.
 * bianary files can be read too.
+
+0.8.1 (2023-07-27)
+------------------
+* viewer_4D is a lot more concise and bug free.
