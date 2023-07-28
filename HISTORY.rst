@@ -54,3 +54,7 @@ History
 0.8.3 (2023-07-28)
 ------------------
 * critical bug was fixed in viewer_4D
+
+0.8.4 (2023-07-28)
+------------------
+* critical bug was fixed in viewer_4D

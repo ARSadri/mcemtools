@@ -116,6 +116,10 @@ class viewer_4D:
 
         self.data4D_shape = self.data4D.shape
         self.data4D_shape_list = np.array(self.data4D_shape)
+        self.viewers_list = [napari.Viewer(), napari.Viewer()]
+        STEM_img, PACBED = self.statistics_4D(self.data4D)
+        self.viewers_list[0].add_image(PACBED)
+        self.viewers_list[1].add_image(STEM_img)
 
         self.viewers_list[0].bind_key(
             key = 'i', func = self.print_shape_info)
@@ -139,11 +143,6 @@ class viewer_4D:
             (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
         self.mask2D_list.append(np.ones(
             (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
-
-        STEM_img, PACBED = self.statistics_4D(self.data4D)
-        self.viewers_list = [napari.Viewer(), napari.Viewer()]
-        self.viewers_list[0].add_image(PACBED)
-        self.viewers_list[1].add_image(STEM_img)
         
         napari.run()
     
