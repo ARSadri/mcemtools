@@ -46,3 +46,7 @@ History
 0.8.1 (2023-07-27)
 ------------------
 * viewer_4D is a lot more concise and bug free.
+
+0.8.1 (2023-07-27)
+------------------
+* by pressing i, you get shapes info, m shows the mask and F5 updates the mask.

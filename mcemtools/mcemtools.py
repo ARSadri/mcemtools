@@ -107,24 +107,25 @@ def open_muSTEM_binary(filename):
     return np.reshape(np.fromfile(filename, dtype = d_type),(y,x))
 
 class viewer_4D:
-    def __init__(self, data4D, logger = print):
+    def __init__(self, data4D, 
+                 statistics_4D = sum4D, logger = print):
         import napari
         self.data4D = data4D
+        self.statistics_4D = statistics_4D
+        self.logger = logger
+
         self.data4D_shape = self.data4D.shape
         self.data4D_shape_list = np.array(self.data4D_shape)
-        self.viewers_list = [napari.Viewer(), napari.Viewer()]
-        self.viewers_list[0].add_image(self.data4D.sum(1).sum(0).squeeze())
-        self.viewers_list[1].add_image(self.data4D.sum(3).sum(2).squeeze())
 
         self.viewers_list[0].bind_key(
-            key = 'Control-i', func = self.print_shape_info)
+            key = 'i', func = self.print_shape_info)
         self.viewers_list[1].bind_key(
-            key = 'Control-i', func = self.print_shape_info)
+            key = 'i', func = self.print_shape_info)
         
         self.viewers_list[0].bind_key(
-            key = 'Control-Shift-s', func = self.save)
+            key = 'm', func = self.show_mask)
         self.viewers_list[1].bind_key(
-            key = 'Control-Shift-s', func = self.save)
+            key = 'm', func = self.show_mask)
         
         self.viewers_list[0].bind_key(
             key = 'F5', func = self.update_by_masked_sum_4D)
@@ -138,16 +139,19 @@ class viewer_4D:
             (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
         self.mask2D_list.append(np.ones(
             (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
-        self.logger = logger
+
+        STEM_img, PACBED = self.statistics_4D(self.data4D)
+        self.viewers_list = [napari.Viewer(), napari.Viewer()]
+        self.viewers_list[0].add_image(PACBED)
+        self.viewers_list[1].add_image(STEM_img)
+        
         napari.run()
     
-    def save(self, viewer):
-        if isinstance(self.logger, lognflow):
-            assert self.logger, 'logger does not point to a valid directory.'
-            self.logger.log_imshow('masks/mask2D_0', self.mask2D_list[0])
-            self.logger.log_single('masks/mask2D_0', self.mask2D_list[0])
-            self.logger.log_imshow('masks/mask2D_1', self.mask2D_list[1])
-            self.logger.log_single('masks/mask2D_1', self.mask2D_list[1])
+    def show_mask(self, viewer):
+        self.update_by_masked_sum_4D(viewer)
+        viewer_index = self.viewers_list.index(viewer)
+        plt.figure(), plt.imshow(self.mask2D_list[viewer_index])
+        plt.title(f'mask for viewer {viewer_index}'), plt.show()
     
     def get_mask2D(self, shape_layer, mask_shape):
         from skimage.draw import polygon2mask
@@ -210,12 +214,12 @@ class viewer_4D:
                 mask4D = np.zeros(self.data4D_shape, dtype='int8')
                 if(viewer_index == 0):
                     mask4D[:, :, mask2D==1] = 1
-                    STEM_img, PACBED = sum_4D(self.data4D, mask4D)
+                    STEM_img, PACBED = self.statistics_4D(self.data4D, mask4D)
                     self.viewers_list[1].layers[0].data = STEM_img
                     self.logger('STEM image updated')
                 if(viewer_index == 1):
                     mask4D[mask2D==1, :, :] = 1
-                    STEM_img, PACBED = sum_4D(self.data4D, mask4D)
+                    STEM_img, PACBED = self.statistics_4D(self.data4D, mask4D)
                     self.viewers_list[0].layers[0].data = PACBED
                     self.logger('PACBED image updated')
 
