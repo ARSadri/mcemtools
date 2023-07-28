@@ -108,7 +108,7 @@ def open_muSTEM_binary(filename):
 
 class viewer_4D:
     def __init__(self, data4D, 
-                 statistics_4D = sum4D, logger = print):
+                 statistics_4D = sum_4D, logger = print):
         import napari
         self.data4D = data4D
         self.statistics_4D = statistics_4D
