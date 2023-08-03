@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = '0.8.4'
+__version__ = '0.8.5'
 
 """The setup script."""
 
@@ -13,8 +13,7 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = ['numpy', 'matplotlib', 'scipy', 
-                'scikit-learn', 'scikit-image',
-                'lognflow', 'RobustGaussianFittingLibrary']
+                'scikit-learn', 'scikit-image', 'lognflow']
 
 test_requirements = ['pytest>=3', ]
 

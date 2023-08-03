@@ -172,6 +172,20 @@ def image2polar(data,
     
     return (polar_image, polar_imageq, polar_mask, polar_maskq)
 
+class polar_transform:
+    def __init__(self, image_shape, centre, polar_shape):
+        self.image_shape = image_shape
+        self.polar_shape = polar_shape
+        self.centre = centre
+        self.get_polar_coords_output = \
+            get_polar_coords(self.image_shape, self.centre, self.polar_shape)
+    def image2polar(self, data):
+        return image2polar(data, self.polar_shape[0], self.polar_shape[1],
+                           self.centre, self.get_polar_coords_output)
+    def polar2image(self, data, dataq = None):
+        return polar2image(data, self.image_shape, dataq, self.centre,
+                           self.get_polar_coords_output)
+
 def normalize_4D(data4D, mask4D = None):
     """
         Note::
@@ -210,3 +224,20 @@ def normalize_4D(data4D, mask4D = None):
     data4D = data4D.reshape(n_x, n_y, n_r, n_c)
     
     return data4D
+
+def data4D_to_multichannel(data4D):
+    """data4D to multichannel
+    
+        Given the input numpy array of shape n_x x n_y x n_r x n_c the output
+        would simply be n_r x n_c x n_x*n_y.
+        
+        The definition of channel is according to RGB of matplotlib. As such 
+        this can be easily given to functions that take multichannel in lognflow
+    
+    """
+    n_x, n_y, n_r, n_c = data4D.shape
+    data4D_multich = data4D.reshape(n_x*n_y, n_r, n_c)
+    return data4D_multich.swapaxes(0, 1).swapaxes(1, 2)
+    
+    
+    

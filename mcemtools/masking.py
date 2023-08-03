@@ -57,7 +57,8 @@ class image_by_windows:
     def __init__(self, 
                  img_shape: tuple[int, int], 
                  win_shape: tuple[int, int],
-                 skip: tuple[int, int] = (1, 1)):
+                 skip: tuple[int, int] = (1, 1),
+                 method = 'linear'):
         """image by windows
         
             I am using OOP here because the user pretty much always wants to
@@ -74,19 +75,39 @@ class image_by_windows:
                 the cropping windows shape
             :param skip:
                 The skipping length of windows
+            :param method:
+                default is linear, it means that if it cannot preserve the skip
+                it will not, but the grid will be spread evenly among windows.
+                If you wish to keep the skip exact, choose fixed. If the size
+                of the image is not dividable by the skip, it will have to
+                change the location of last window such that the entire image
+                is covered. This emans that the location of the grid will be 
+                moved to the left. 
         """
         self.img_shape = img_shape
         self.win_shape = win_shape
         self.skip = skip
-        n_r, n_c = img_shape[:2]
-        rows = np.arange(0, n_r - win_shape[0] + 1, skip[0])
-        clms = np.arange(0, n_c - win_shape[1] + 1, skip[1])
         
-        if rows[-1] < n_r - win_shape[0]:
-            rows = np.concatenate(rows, n_r - win_shape[0])
-        if clms[-1] > n_c - win_shape[1]:
-            clms = np.concatenate(clms, n_c - win_shape[1])
-    
+        assert win_shape[0]<= img_shape[0], 'win must be smaller than the image'
+        assert win_shape[1]<= img_shape[1], 'win must be smaller than the image'
+        
+        n_r, n_c = img_shape[:2]
+
+        if(method == 'fixed'):
+            rows = np.arange(0, n_r - win_shape[0] + 1, skip[0])
+            clms = np.arange(0, n_c - win_shape[1] + 1, skip[1])
+            if rows[-1] < n_r - win_shape[0]:
+                rows = np.concatenate((rows, np.array([n_r - win_shape[0]])))
+            if clms[-1] < n_c - win_shape[1]:
+                clms = np.concatenate((clms, np.array([n_c - win_shape[1]])))
+        if(method == 'linear'):
+            rows = np.linspace(
+                0, n_r - win_shape[0],n_r // skip[0], dtype = 'int')
+            rows = np.unique(rows)
+            clms = np.linspace(
+                0, n_c - win_shape[1],n_r // skip[1], dtype = 'int')
+            clms = np.unique(clms)
+            
         grid_clms, grid_rows = np.meshgrid(clms, rows)
     
         self.grid = np.array([grid_rows.ravel(), grid_clms.ravel()]).T

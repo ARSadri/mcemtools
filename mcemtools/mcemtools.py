@@ -169,10 +169,10 @@ class viewer_4D:
                         _mask2D = polygon2mask(mask_shape ,pt_data)
                     else:
                         _mask2D = label2D.copy()
-                        _mask2D[_mask2D != shape_cnt + 1] = 0
+                        _mask2D[_mask2D != shape_cnt + 1] = 0   ##################################Wrong when overlapping
                 else:
                     _mask2D = label2D.copy()
-                    _mask2D[_mask2D != shape_cnt + 1] = 0
+                    _mask2D[_mask2D != shape_cnt + 1] = 0   ##################################Wrong when overlapping
                 if sh_width == 2:
                     _mask2D_swirl_sum = swirl_and_sum(_mask2D)
                     _mask2D_swirl_sum[_mask2D_swirl_sum >= 7] = 0
