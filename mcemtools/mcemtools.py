@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from lognflow import printprogress, select_directory, lognflow
 from .analysis import sum_4D, swirl_and_sum
 from .masking import mask2D_to_4D
+import time
 
 def locate_atoms(data4D, min_distance = 3, filter_size = 3,
                  reject_too_close = False):
@@ -120,30 +121,31 @@ class viewer_4D:
         STEM_img, PACBED = self.statistics_4D(self.data4D)
         self.viewers_list[0].add_image(PACBED)
         self.viewers_list[1].add_image(STEM_img)
-
-        self.viewers_list[0].bind_key(
-            key = 'i', func = self.print_shape_info)
-        self.viewers_list[1].bind_key(
-            key = 'i', func = self.print_shape_info)
         
-        self.viewers_list[0].bind_key(
-            key = 'm', func = self.show_mask)
-        self.viewers_list[1].bind_key(
-            key = 'm', func = self.show_mask)
-        
-        self.viewers_list[0].bind_key(
-            key = 'F5', func = self.update_by_masked_sum_4D)
-        self.viewers_list[1].bind_key(
-            key = 'F5', func = self.update_by_masked_sum_4D)
-        self.viewers_list[0].mouse_drag_callbacks.append(self.mouse_drag_event)
-        self.viewers_list[1].mouse_drag_callbacks.append(self.mouse_drag_event)
+        #, Down, Left, Right
+        for viewer_cnt in range(2):
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'Up', func = self.move_up)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'Down', func = self.move_down)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'Left', func = self.move_left)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'Right', func = self.move_right)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'i', func = self.print_shape_info)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'm', func = self.show_mask)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'F5', func = self.update_by_masked_sum_4D)
+            self.viewers_list[viewer_cnt].mouse_drag_callbacks.append(self.mouse_drag_event)
         
         self.mask2D_list = []
         self.mask2D_list.append(np.ones(
             (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
         self.mask2D_list.append(np.ones(
             (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
-        
+        self.move_perv_time_time = 0
         napari.run()
     
     def show_mask(self, viewer):
@@ -235,3 +237,30 @@ class viewer_4D:
         self.logger(f'shape_type:{viewer.layers[1].shape_type}')
         self.logger(f'data:{viewer.layers[1].data}')
         self.logger(f'edge_width:{viewer.layers[1].edge_width}')
+        
+    def move(self, viewer, axis, sign):
+        time_since_last_move = time.time() - self.move_perv_time_time
+        shape_cnt_list = list(viewer.layers[1].selected_data)
+        if shape_cnt_list:
+            cdata = []
+            for shape_cnt in shape_cnt_list:
+                _cdata = viewer.layers[1].data[int(shape_cnt)]
+                _cdata[:, axis] += sign
+                cdata.append(_cdata)
+            viewer.layers[1].data = cdata
+            selected_data = set()
+            for shape_cnt in shape_cnt_list:
+                selected_data.add(shape_cnt)
+            viewer.layers[1].selected_data = selected_data
+        if time_since_last_move > 0.5:
+            self.update_by_masked_sum_4D(viewer)
+            self.move_perv_time_time = time.time()
+
+    def move_up(self, viewer):
+        self.move(viewer, axis = 0, sign = -1)
+    def move_down(self, viewer):
+        self.move(viewer, axis = 0, sign = 1)
+    def move_left(self, viewer):
+        self.move(viewer, axis = 1, sign = -1)
+    def move_right(self, viewer):
+        self.move(viewer, axis = 1, sign = 1)

@@ -62,3 +62,7 @@ History
 0.8.5 (2023-08-03)
 ------------------
 * bug fixed in image_by_windows
+
+0.8.6 (2023-08-05)
+------------------
+* viewer_4D handles arrows to move the selected objects.
