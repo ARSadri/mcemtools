@@ -66,3 +66,10 @@ History
 0.8.6 (2023-08-05)
 ------------------
 * viewer_4D handles arrows to move the selected objects.
+
+0.8.7 (2023-08-31)
+------------------
+* added load_raw and load_dm4.
+* bug fixed in viewer_4D, moves a lot smoother than before.
+* viewer_4D shows a single image when size of the mask is 1 pixel, rapidly.
+* conv_4D added to analysis

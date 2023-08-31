@@ -19,7 +19,7 @@ def test_annular_mask():
 
 def test_image_by_windows():
     image = mcemtools.annular_mask((100, 100), 
-                 centre = (40, 60), radius = 30, in_radius = 16)
+                 centre = (40, 60), radius = 30, in_radius = 16).astype('float')
     im_by_win = mcemtools.image_by_windows( 
                  img_shape = image.shape, 
                  win_shape = (25, 25),

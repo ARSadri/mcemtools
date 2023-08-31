@@ -39,9 +39,26 @@ def test_sum_4D():
     data4D = np.random.rand(10, 11, 12, 13)
     STEM, PACBED = mcemtools.sum_4D(data4D)
 
+def test_bin_4D():
+    print('bin_4D')
+    print('%'*60)
+    data4D = np.ones((100, 80, 60, 40))
+    binned_data4D = mcemtools.bin_4D(data4D,2, 2)
+    assert (binned_data4D == 4).all()
+    print(binned_data4D.shape)
+    
+def test_normalize_4D():
+    print('test_normalize_4D')
+    print('%'*60)
+    data4D = np.random.rand(100, 80, 60, 40)
+    normalized_data4D = mcemtools.normalize_4D(data4D)
+    print(normalized_data4D.shape)
+
 if __name__ == '__main__':
+    test_bin_4D()
     test_pyMSSE()
     test_cross_correlation_4D()
     test_SymmSTEM()
     test_centre_of_mass_4D()
     test_sum_4D()
+    test_normalize_4D()

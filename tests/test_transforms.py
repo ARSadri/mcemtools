@@ -45,24 +45,7 @@ def test_get_polar_coords():
     mcemtools.image2polar(
         img, get_polar_coords_output = get_polar_coords_output)
 
-def test_bin_4D():
-    print('bin_4D')
-    print('%'*60)
-    data4D = np.random.rand(100, 80, 60, 40)
-    binned_data4D = mcemtools.bin_4D(data4D,2, 2)
-    print(binned_data4D.shape)
-    
-def test_normalize_4D():
-    print('test_normalize_4D')
-    print('%'*60)
-    data4D = np.random.rand(100, 80, 60, 40)
-    normalized_data4D = mcemtools.normalize_4D(data4D)
-    print(normalized_data4D.shape)
-    
 if __name__ == '__main__':
     test_image2polar()
     test_polar2image()
     test_get_polar_coords()
-    test_bin_4D()
-    test_normalize_4D()
-

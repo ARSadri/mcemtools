@@ -1,37 +1,6 @@
 import numpy as np
 import scipy
 
-def bin_4D(data4D, 
-          n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
-          method_pos: str = 'skip', method_pix: str = 'linear'):
-    
-    data4D = data4D.copy()
-    if(n_pos_in_bin > 1):
-        if(method_pos == 'skip'):
-            data4D = data4D[::n_pos_in_bin, ::n_pos_in_bin]
-        if(method_pos == 'linear'):
-            data4D = data4D.swapaxes(
-                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
-            kern = np.full((n_pos_in_bin, n_pos_in_bin), fill_value = 1)
-            for rcnt in range(data4D.shape[0]):
-                for ccnt in range(data4D.shape[1]):
-                    data4D[rcnt, ccnt] = \
-                        scipy.ndimage.convolve(data4D[rcnt, ccnt], kern)
-            data4D = data4D[:, :, ::n_pos_in_bin, ::n_pos_in_bin]
-            data4D = data4D.swapaxes(
-                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
-    if(n_pix_in_bin > 1):
-        if(method_pix == 'skip'):
-            data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
-        if(method_pix == 'linear'):
-            kern = np.full((n_pix_in_bin, n_pix_in_bin), fill_value = 1)
-            for xcnt in range(data4D.shape[0]):
-                for ycnt in range(data4D.shape[1]):
-                    data4D[xcnt, ycnt] = \
-                        scipy.ndimage.convolve(data4D[xcnt, ycnt], kern)
-            data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
-    return data4D
-
 def get_polar_coords(image_shape, centre, polar_shape):
     n_angles, n_rads = polar_shape
     n_rows, n_clms = image_shape
@@ -186,58 +155,18 @@ class polar_transform:
         return polar2image(data, self.image_shape, dataq, self.centre,
                            self.get_polar_coords_output)
 
-def normalize_4D(data4D, mask4D = None):
-    """
-        Note::
-            make sure you have set mask4D[data4D == 0] = 0 when dealing with
-            Poisson.
-    """
-    data4D = data4D.copy()
-    if mask4D is None:
-        mask4D = np.ones(data4D.shape)
-    else:
-        mask4D = mask4D.copy()
-    n_x, n_y, n_r, n_c = data4D.shape
-    if mask4D is not None:
-        mask4D = mask4D.reshape(n_x, n_y, n_r * n_c)
-        mask4D = mask4D.reshape(n_x * n_y, n_r * n_c)
-
-    data4D = data4D.reshape(n_x, n_y, n_r * n_c)
-    data4D = data4D.reshape(n_x * n_y, n_r * n_c)
-    
-    if mask4D is not None:
-        dset_mean = (data4D*mask4D).sum(1)
-        dset_mask_sum_1 = mask4D.sum(1)
-        dset_mean[dset_mask_sum_1 > 0] /= dset_mask_sum_1[dset_mask_sum_1>0]
-        data4D -= np.tile(np.array([dset_mean]).swapaxes(0,1), (1, n_r * n_c))
-        dset_std = (data4D ** 2).sum(1)
-        dset_std[dset_mask_sum_1 > 0] /= dset_mask_sum_1[dset_mask_sum_1>0]
-    else:
-        dset_mean = (data4D).mean(1)
-        data4D -= np.tile(np.array([dset_mean]).swapaxes(0,1), (1, n_r * n_c))
-        dset_std = (data4D ** 2).mean(1)
-    dset_std = dset_std**0.5
-    dset_std_tile = np.tile(np.array([dset_std]).swapaxes(0,1), (1, n_r * n_c))
-    data4D[dset_std_tile>0] /= dset_std_tile[dset_std_tile>0]
-    
-    data4D = data4D.reshape(n_x, n_y, n_r* n_c)
-    data4D = data4D.reshape(n_x, n_y, n_r, n_c)
-    
-    return data4D
-
 def data4D_to_multichannel(data4D):
     """data4D to multichannel
-    
         Given the input numpy array of shape n_x x n_y x n_r x n_c the output
-        would simply be n_r x n_c x n_x*n_y.
-        
-        The definition of channel is according to RGB of matplotlib. As such 
-        this can be easily given to functions that take multichannel in lognflow
-    
+        would simply be (n_r+2)*n_x x (n_c+2)*n_y.    
     """
     n_x, n_y, n_r, n_c = data4D.shape
-    data4D_multich = data4D.reshape(n_x*n_y, n_r, n_c)
-    return data4D_multich.swapaxes(0, 1).swapaxes(1, 2)
-    
-    
+    new_n_r = (n_r + 2) * n_x
+    new_n_c = (n_c + 2) * n_y
+    canv = np.zeros((new_n_r, new_n_c), dtype=data4D.dtype)
+    for xcnt in range(n_x):
+        for ycnt in range(n_y):
+            canv[xcnt*n_r + 1 : (xcnt + 1)*n_r - 1, 
+                 ycnt*n_c + 1 : (ycnt + 1)*n_c - 1] = data4D[xcnt, ycnt]
+    return canv
     

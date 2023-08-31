@@ -33,14 +33,16 @@ def annular_mask(image_shape : tuple,
     Returns
     -------
         : np.ndarray of type uint8
-            An image of size h x w where all elements that are closer to the origin
-            of a circle with centre at centre and radius radius are one and the rest
-            are zero. We use equal or greater than for both radius and in_radius.
+            An image of size h x w where all elements that are closer 
+            to the origin of a circle with centre at centre and radius 
+            radius are one and the rest are zero. We use equal or greater 
+            than for both radius and in_radius.
     """
     n_r, n_c = image_shape
     if centre is None: # use the middle of the image
         centre = (int(n_r/2), int(n_c/2))
-    if radius is None: # use the smallest distance between the centre and image walls
+    if radius is None: 
+        # use the smallest distance between the centre and image walls
         radius = np.minimum(centre[0], centre[1])
 
     Y, X = np.ogrid[:n_r, :n_c]
@@ -86,83 +88,84 @@ class image_by_windows:
         """
         self.img_shape = img_shape
         self.win_shape = win_shape
-        self.skip = skip
+        self.skip      = skip
         
-        assert win_shape[0]<= img_shape[0], 'win must be smaller than the image'
-        assert win_shape[1]<= img_shape[1], 'win must be smaller than the image'
+        n_r, n_c = self.img_shape[:2]
+        skip_r, skip_c = self.skip
         
-        n_r, n_c = img_shape[:2]
+        assert win_shape[0]<= n_r, 'win must be smaller than the image'
+        assert win_shape[1]<= n_c, 'win must be smaller than the image'
 
         if(method == 'fixed'):
-            rows = np.arange(0, n_r - win_shape[0] + 1, skip[0])
-            clms = np.arange(0, n_c - win_shape[1] + 1, skip[1])
+            rows = np.arange(0, n_r - win_shape[0] + 1, skip_r)
+            clms = np.arange(0, n_c - win_shape[1] + 1, skip_c)
             if rows[-1] < n_r - win_shape[0]:
                 rows = np.concatenate((rows, np.array([n_r - win_shape[0]])))
             if clms[-1] < n_c - win_shape[1]:
                 clms = np.concatenate((clms, np.array([n_c - win_shape[1]])))
         if(method == 'linear'):
             rows = np.linspace(
-                0, n_r - win_shape[0],n_r // skip[0], dtype = 'int')
+                0, n_r - win_shape[0],n_r // skip_r, dtype = 'int')
             rows = np.unique(rows)
             clms = np.linspace(
-                0, n_c - win_shape[1],n_r // skip[1], dtype = 'int')
+                0, n_c - win_shape[1],n_r // skip_c, dtype = 'int')
             clms = np.unique(clms)
-            
         grid_clms, grid_rows = np.meshgrid(clms, rows)
-    
         self.grid = np.array([grid_rows.ravel(), grid_clms.ravel()]).T
-        self.visited = np.zeros(self.img_shape, dtype='int')
-        for grc in self.grid:
-            self.visited[grc[0]:grc[0] + self.win_shape[0], 
-                         grc[1]:grc[1] + self.win_shape[1]] += 1
         self.n_pts = self.grid.shape[0]
         
     def image2views(self, img):
         all_other_dims = ()
-        if (len(self.img_shape)>2):
-            all_other_dims = self.img_shape[2:]
-            
-        viewed = np.zeros(
-            (self.grid.shape[0], self.win_shape[0], 
-                                 self.win_shape[1]) + all_other_dims,
+        if (len(img.shape)>2):
+            all_other_dims = img.shape[2:]
+        views = np.zeros(
+            (self.grid.shape[0], self.win_shape[0], self.win_shape[1]
+             ) + all_other_dims,
             dtype = img.dtype)
         for gcnt, grc in enumerate(self.grid):
             gr, gc = grc
-            viewed[gcnt] = img[
+            views[gcnt] = img[
                 gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]]
-        return viewed
+        return views
     
-    def views2image(self, viewed, method = 'linear'):
+    def views2image(self, views, method = 'linear'):
+        img_shape = (self.img_shape[0], self.img_shape[1])
+        if (len(views.shape) > 3):
+            img_shape += views.shape[3:]
+
+        assert len(views.shape) != 2, 'views2image: views cannot be 2D yet!'
+
         if(method == 'linear'):
-            img = np.zeros(self.img_shape, dtype = 'float')
+            img = np.zeros(img_shape, dtype = views.dtype)
+            visited = np.zeros(img_shape, dtype = views.dtype)
             for gcnt, grc in enumerate(self.grid):
                 gr, gc = grc
-                img[gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]] += \
-                    viewed[gcnt]
-            img[self.visited>0, ...] = \
-                img[self.visited>0, ...] / self.visited[self.visited>0]
-            img = img.astype(viewed.dtype)
+                img[gr:gr + self.win_shape[0], 
+                    gc:gc + self.win_shape[1]] += views[gcnt]
+                visited[gr:gr + self.win_shape[0], 
+                        gc:gc + self.win_shape[1]] += 1
+            img[visited>0] = img[visited>0] / visited[visited>0]
         else:
             img = np.zeros(
-                (self.win_shape[0]*self.win_shape[1],) + self.img_shape, 
-                viewed.dtype)
+                (self.win_shape[0]*self.win_shape[1],) + img_shape, 
+                views.dtype)
             visited = np.zeros(
                 (self.win_shape[0] * self.win_shape[1], 
-                 self.img_shape[0], self.img_shape[1]), dtype='int')
+                 img_shape[0], img_shape[1]), dtype='int')
             for gcnt, grc in enumerate(self.grid):
                 gr, gc = grc
-                
                 level2use = visited[
                     :, gr:gr + self.win_shape[0], 
                        gc:gc + self.win_shape[1]].max(2).max(1)
                 level = np.where(level2use == 0)[0][0]
-                
-                img[level, gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]] += \
-                    viewed[gcnt]
+                img[level, gr:gr + self.win_shape[0],
+                           gc:gc + self.win_shape[1]] += views[gcnt]
                 visited[level, 
                     gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]] = 1
             if(method == 'max'):
                 img = img.max(0).squeeze()
+            if(method == 'min'):
+                img = img.min(0).squeeze()
         return img
 
 class markimage:
@@ -205,10 +208,12 @@ class markimage:
             sl1 = plt.axes([0.25, 0.15, 0.6, 0.03])
             sl2 = plt.axes([0.25, 0.1,  0.6, 0.03])
             sl3 = plt.axes([0.25, 0.05, 0.6, 0.03])
-            self.markshape = plt.Circle((cy,cx), circle_radius, ec="k", fc = 'None')
+            self.markshape = plt.Circle(
+                (cy,cx), circle_radius, ec="k", fc = 'None')
             axs[0].add_patch(self.markshape)
             self.slider_r = Slider(sl1, 
-                'radius', 0.0, self.im.get_array().shape[0]/2, valinit = circle_radius)
+                'radius', 0.0, self.im.get_array().shape[0]/2, 
+                valinit = circle_radius)
             self.slider_cx = Slider(sl2,
                 'centre_x', 0.0, self.im.get_array().shape[0], valinit = cx)
             self.slider_cy = Slider(sl3, 

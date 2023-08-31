@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = '0.8.6'
+__version__ = '0.8.7'
 
 """The setup script."""
 
