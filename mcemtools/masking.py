@@ -125,7 +125,7 @@ class image_by_windows:
         for gcnt, grc in enumerate(self.grid):
             gr, gc = grc
             views[gcnt] = img[
-                gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]]
+                gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]].copy()
         return views
     
     def views2image(self, views, method = 'linear'):

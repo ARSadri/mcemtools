@@ -155,7 +155,7 @@ class polar_transform:
         return polar2image(data, self.image_shape, dataq, self.centre,
                            self.get_polar_coords_output)
 
-def data4D_to_multichannel(data4D):
+def data4D_to_frame(data4D):
     """data4D to multichannel
         Given the input numpy array of shape n_x x n_y x n_r x n_c the output
         would simply be (n_r+2)*n_x x (n_c+2)*n_y.    
@@ -166,7 +166,6 @@ def data4D_to_multichannel(data4D):
     canv = np.zeros((new_n_r, new_n_c), dtype=data4D.dtype)
     for xcnt in range(n_x):
         for ycnt in range(n_y):
-            canv[xcnt*n_r + 1 : (xcnt + 1)*n_r - 1, 
-                 ycnt*n_c + 1 : (ycnt + 1)*n_c - 1] = data4D[xcnt, ycnt]
+            canv[xcnt*n_r: (xcnt + 1)*n_r, ycnt*n_c: (ycnt + 1)*n_c] = \
+                data4D[xcnt, ycnt]
     return canv
-    

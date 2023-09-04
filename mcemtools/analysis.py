@@ -130,13 +130,11 @@ def conv_4D(data4D, winXY, conv_function = sum_4D):
     imgbywin = image_by_windows(
                 data4D.shape, winXY)
     views = imgbywin.image2views(data4D)
-    _views = views.copy()
     for cnt, view in enumerate(views):
         _, stat = conv_function(view)
-        stat = np.tile(np.array([np.array([stat])]), 
-                       (view.shape[0], view.shape[1], 1, 1))
-        _views[cnt] = stat.copy()
-    data4D = imgbywin.views2image(_views)
+        views[cnt] = np.tile(np.array([np.array([stat])]), 
+                             (view.shape[0], view.shape[1], 1, 1)).copy()
+    data4D = imgbywin.views2image(views)
     return data4D
 
 def bin_4D(data4D, 
@@ -148,19 +146,19 @@ def bin_4D(data4D,
         if(method_pos == 'skip'):
             data4D = data4D[::n_pos_in_bin, ::n_pos_in_bin]
         if(method_pos == 'linear'):
-            data4D = data4D.swapaxes(
-                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
-            data4D = conv_4D(data4D, (n_pos_in_bin, n_pos_in_bin),
-                             conv_function)
-            data4D = data4D[:, :, ::n_pos_in_bin, ::n_pos_in_bin]
-            data4D = data4D.swapaxes(
-                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+            data4D = conv_4D(
+                data4D, (n_pos_in_bin, n_pos_in_bin), conv_function)
+            data4D = data4D[::n_pos_in_bin, ::n_pos_in_bin, :, :]
     if(n_pix_in_bin > 1):
         if(method_pix == 'skip'):
             data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
         if(method_pix == 'linear'):
-            data4D = conv_4D(data4D, (n_pix_in_bin, n_pix_in_bin),
-                             conv_function)
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+            data4D = conv_4D(
+                data4D, (n_pix_in_bin, n_pix_in_bin), conv_function)
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
             data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
     return data4D
 

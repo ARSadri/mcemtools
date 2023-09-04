@@ -32,7 +32,7 @@ def load_raw(filename, scanSize: tuple[int, int], detSize: tuple[int, int]):
     data = np.fromfile(file=filename,dtype=dt)["data"].reshape(scanSize+detSize)
     return data
 
-class mesh_data_generator:
+class mesh_maker_2D:
     def __init__(self, input_image, ground_truth = None):
         
         if ground_truth is None:
@@ -92,7 +92,7 @@ def mask_random_pixels(inimg_set, mask_rate, random_function = np.zeros):
         inimg_set[imgcnt] = inimg.copy()
     return inimg_set
     
-class data_maker_image:
+class data_maker_2D:
     def __init__(self, inimg, groundtruth, win_shape,
                  skip = (1,1), mask_rate = 0.5):
         assert inimg.shape == groundtruth.shape
@@ -132,7 +132,7 @@ class data_maker_image:
             inds = np.array([inds])
         return(self.X_in[inds], self.Y_label[inds])
     
-class data_maker_data4D:
+class data_maker_4D:
     def __init__(self, inimg, groundtruth, len_side = 3):
         assert len_side == (len_side//2)*2 + 1,\
             'data_maker_I4D:len_side should be odd'

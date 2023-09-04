@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.8.7'
+__version__ = '0.8.8'
 
 from .mcemtools import viewer_4D
 
@@ -17,7 +17,7 @@ from .masking import annular_mask, image_by_windows, markimage, mask2D_to_4D
 from .tensor_svd import svd_fit, svd_eval
 
 from .transforms import (get_polar_coords, polar2image, image2polar,
-                         data4D_to_multichannel)
+                         data4D_to_frame)
 
 from .data import (open_muSTEM_binary, load_dm4, load_raw,
-    mesh_data_generator, data_maker_image, data_maker_data4D)
+    mesh_maker_2D, data_maker_2D, data_maker_4D)

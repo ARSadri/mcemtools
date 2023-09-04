@@ -73,3 +73,7 @@ History
 * bug fixed in viewer_4D, moves a lot smoother than before.
 * viewer_4D shows a single image when size of the mask is 1 pixel, rapidly.
 * conv_4D added to analysis
+
+0.8.8 (2023-09-04)
+------------------
+* critical bug fixed in bin_4D
