@@ -169,3 +169,42 @@ def data4D_to_frame(data4D):
             canv[xcnt*n_r: (xcnt + 1)*n_r, ycnt*n_c: (ycnt + 1)*n_c] = \
                 data4D[xcnt, ycnt]
     return canv
+
+def revalue_elements(vec, new_values = None, new_values_start = None):
+    """ revalue elements
+        given a numpy nd array, you can revalue each element. This is 
+        particularly useful when you provide indices that sort cluster centers
+        as output of a clustering algorithm to relabel the clustering labels 
+        accordingly. Or it is useful to fill the gaps between values used 
+        inside a vector. 
+        
+        :param vec:
+            the input numpy ndimensional array to revalue its elements. The
+            set of values in the dataset will be::
+                np.unique(vec.ravel())
+        :param new_values:
+            a list or 1d numpy vector for the new values for elements. If not
+            given, we make a range of values starting from the smallest
+            value seen in vec to cover all unique values in vec
+        :param start:
+            if new_values are not given but new_values_start is given, we use it
+            tp start the range of values to replace values in vec. 
+        
+        :returns:
+            a new vector with same type and size of input vec where every 
+            element has changed to have a new value.
+            
+    """
+    new_vec = vec.copy()
+    old_values = np.unique(vec.ravel())
+    if new_values is None:
+        if new_values_start is None:
+            new_values_start = old_values.min()
+        new_values = np.arange(
+            new_values_start, old_values.shape[0], dtype=vec.dtype)
+    else:
+        new_values = np.array(new_values)
+        assert old_values.shape[0] == new_values.shape[0]
+    for cnt, old_value in  enumerate(old_values):
+        new_vec[vec == old_value] = new_values[cnt]
+    return new_vec

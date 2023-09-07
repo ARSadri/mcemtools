@@ -59,8 +59,15 @@ class viewer_4D:
     def show_mask(self, viewer):
         self.update_by_masked_sum_4D(viewer)
         viewer_index = self.viewers_list.index(viewer)
-        plt.figure(), plt.imshow(self.mask2D_list[viewer_index])
-        plt.title(f'mask for viewer {viewer_index}'), plt.show()
+        try:
+            self.logger.log_single(
+                'mask', self.mask2D_list[viewer_index],time_tag = False)
+        except:
+            pass
+        plt.figure()
+        plt.imshow(self.mask2D_list[viewer_index])
+        plt.title(f'mask for viewer {viewer_index}')
+        plt.show()
     
     def get_mask2D(self, shape_layer, mask_shape):
         from skimage.draw import polygon2mask

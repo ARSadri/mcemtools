@@ -77,3 +77,9 @@ History
 0.8.8 (2023-09-04)
 ------------------
 * critical bug fixed in bin_4D
+
+0.8.9 (2023-09-20)
+------------------
+* bug removed from Normalize_4D
+* bug removed from SymmetrySTEM
+* tets added to locate atom and ...

@@ -298,3 +298,33 @@ class markimage:
                 self.slider_s_bot_right_c.val - self.slider_top_left_c.val)
 
         self.fig.canvas.draw_idle()
+
+def remove_labels(label_map, labels_to_remove):
+    if(labels_to_remove.shape[0] > 0):
+        label_map_shape = label_map.shape
+        label_map = label_map.ravel()
+        label_map[np.in1d(label_map, labels_to_remove)] = 0
+        label_map = label_map.reshape(label_map_shape)
+    return(label_map)
+
+def remove_islands_by_size(
+        binImage, min_n_pix = 1, max_n_pix = np.inf, logger = None):    
+    segments_map, n_segments = scipy.ndimage.label(binImage)
+    if(logger):
+        logger(f'counted {n_segments} segments!')
+    segments_labels, n_segments_pix = np.unique(segments_map.ravel(),
+                                         return_counts = True)
+
+    labels_to_remove = segments_labels[(n_segments_pix < min_n_pix) |
+                                       (n_segments_pix > max_n_pix)]
+    if(logger):
+        logger(f'counted {labels_to_remove.shape[0]} too small segments!')
+    segments_map = remove_labels(segments_map, labels_to_remove)
+    segments_map[segments_map > 0] = 1
+
+    if(logger):
+        logger('number of remaining segments pixels')
+        n_p = n_segments_pix[n_segments_pix > min_n_pix]
+        logger(f'{np.sort(n_p)}')
+   
+    return (segments_map)

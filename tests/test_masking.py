@@ -33,9 +33,13 @@ def test_mask2D_to_4D():
                  centre = (40, 60), radius = 30, in_radius = 16)
     mask4D = mcemtools.mask2D_to_4D(mask, (50, 60, 100, 100))
     print(mask4D.shape)
+    
+def test_remove_islands_by_size():
+    ...
 
 if __name__ == '__main__':
     test_markimage()
     test_annular_mask()
     test_image_by_windows()
-    test_mask2D_to_4D()    
+    test_mask2D_to_4D()
+    test_remove_islands_by_size()
