@@ -1,6 +1,6 @@
 import numpy as np
 from .masking import annular_mask, mask2D_to_4D, image_by_windows
-from lognflow import printprogress
+from lognflow import printprogress, lognflow
 from skimage.transform import warp_polar
 
 def normalize_4D(data4D, weights4D = None, method = 'loop'):
@@ -29,7 +29,31 @@ def normalize_4D(data4D, weights4D = None, method = 'loop'):
                 data4D[x_cnt, y_cnt] = cbed
     return data4D
 
-def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = 0, verbose = True):
+def calc_ccorr(inputs_to_iter_sliced: tuple, inputs_to_share: tuple):
+    CBED = inputs_to_iter_sliced[0]
+    mask_ang, nang, mflag = inputs_to_share
+    
+    vec_a = warp_polar(CBED)
+    vec_a_n = vec_a[mask_ang > 0]
+    vec_a_n_std = vec_a_n.std()
+    vec_a_n -= vec_a_n.mean()
+    if vec_a_n_std > 0:
+        vec_a_n /= vec_a_n_std
+    else:
+        vec_a_n *= 0
+    vec_a[mask_ang > 0] = vec_a_n.copy()
+
+    rot = vec_a.copy()
+    corr = np.zeros(nang)
+    for _ang in range(nang):
+        if mflag:
+            vec_a = np.flip(rot.copy(), axis = 0)
+        corr[_ang] = ((rot * vec_a)[mask_ang > 0]).sum() 
+        rot = np.roll(rot, 1, axis=0)
+    return corr
+
+def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False, 
+             verbose = True, use_multiprocessing = True):
     
     n_x, n_y, n_r, n_c = data4D.shape
     
@@ -41,28 +65,31 @@ def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = 0, verbose = True):
     else:
         mask_ang = warp_polar(np.ones((n_r, n_c)))
         
-    corr_ang_auto = np.zeros((n_x,n_y,nang))
-    if(verbose):
-        pBar = printprogress(
-            n_x * n_y, title = f'Symmetry STEM for {n_x * n_y} patterns')
-    for i in range(n_x):
-        for j in range(n_y):
-            vec_a = warp_polar(data4D[i, j].copy())
-            vec_a_n = vec_a[mask_ang > 0]
-            vec_a_n_std = vec_a_n.std()
-            vec_a_n -= vec_a_n.mean()
-            if vec_a_n_std > 0:
-                vec_a_n /= vec_a_n_std
-            else:
-                vec_a_n *= 0
-            vec_a[mask_ang > 0] = vec_a_n.copy()
-            
-            rot = vec_a.copy()
-            for _ang in range(nang):
-                corr_ang_auto[i,j, _ang] = ((rot * vec_a)[mask_ang > 0]).sum() 
-                rot = np.roll(rot, 1, axis=0)
-            if(verbose):
-                pBar()
+    inputs_to_share = (mask_ang, nang, mflag, )
+    if use_multiprocessing:
+        inputs_to_iter = (data4D.reshape((n_x*n_y, n_r, n_c)), )
+        from lognflow import multiprocessor
+        corr_ang_auto = multiprocessor(
+            calc_ccorr, 
+            inputs_to_iter = inputs_to_iter,
+            inputs_to_share = inputs_to_share,
+            outputs = np.zeros((n_x*n_y, nang)),
+            verbose = verbose)
+        corr_ang_auto = corr_ang_auto.reshape(
+            (n_x, n_y, corr_ang_auto.shape[1]))
+    
+    else:
+        corr_ang_auto = np.zeros((n_x,n_y,nang))
+        if(verbose):
+            pBar = printprogress(
+                n_x * n_y, title = f'Symmetry STEM for {n_x * n_y} patterns')
+        for i in range(n_x):
+            for j in range(n_y):
+                corr = calc_ccorr(data4D[i, j], inputs_to_share)
+                corr_ang_auto[i,j] = corr.copy()
+                if(verbose):
+                    pBar()
+    
     corr_ang_auto /= (mask_ang > 0).sum()
     return corr_ang_auto
 

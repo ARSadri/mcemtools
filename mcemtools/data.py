@@ -139,6 +139,8 @@ class data_maker_4D:
         self.len_side = len_side
         self.inimg_shape = inimg.shape
         n_x, n_y, n_r, n_c = inimg.shape
+        self.n_r = n_r
+        self.n_c = n_c
         self.n_x = n_x
         self.n_y = n_y
         grid_x = np.arange(len_side // 2, n_x - len_side // 2, 1, dtype='int')
@@ -160,19 +162,10 @@ class data_maker_4D:
         self.yy = yy.copy()
         mask_range = np.ones(len_side*len_side).astype('int')
         mask_range[(len_side * len_side) // 2] = 0        
+        self.mask_range = mask_range.copy()
         print(f'mask_range:{mask_range}')
                 
-        for gpt_cnt in range(n_pts):
-            a_tile = inimg[
-                xx[gpt_cnt] - len_side // 2 : 
-                    xx[gpt_cnt] + len_side // 2 + 1,
-                yy[gpt_cnt] - len_side // 2 : 
-                    yy[gpt_cnt] + len_side // 2 + 1].copy()
-            a_tile = a_tile.reshape(len_side*len_side, n_r, n_c)
-            
-            self.X_in[gpt_cnt] = a_tile[mask_range == 1].copy()
-            self.Y_label[gpt_cnt] = a_tile[mask_range == 0].copy()
-             
+        for gpt_cnt in range(n_pts):     
             a_tile = groundtruth[
                 xx[gpt_cnt] - len_side // 2 : 
                     xx[gpt_cnt] + len_side // 2 + 1,
@@ -181,6 +174,8 @@ class data_maker_4D:
             a_tile = a_tile.reshape(len_side*len_side, n_r, n_c)
             self.GNDTruth[gpt_cnt] = a_tile[mask_range == 0].copy()
 
+        self.update(inimg)
+
         self.groundtruth_mu = self.reconstruct2D(
             self.GNDTruth.sum(3).sum(2).sum(1).squeeze())
         self.groundtruth_PACBED = self.GNDTruth.sum(1).sum(0).squeeze()
@@ -188,6 +183,18 @@ class data_maker_4D:
             self.Y_label.sum(3).sum(2).sum(1).squeeze())
         self.noisy_PACBED = self.Y_label.sum(1).sum(0).squeeze()
         self.cropped_shape = (grid_x.shape[0], grid_y.shape[0], n_r, n_c)
+    
+    def update(self, inimg):
+        for gpt_cnt in range(self.n_pts):
+            a_tile = inimg[
+                self.xx[gpt_cnt] - self.len_side // 2 : 
+                    self.xx[gpt_cnt] + self.len_side // 2 + 1,
+                self.yy[gpt_cnt] - self.len_side // 2 : 
+                    self.yy[gpt_cnt] + self.len_side // 2 + 1].copy()
+            a_tile = a_tile.reshape(
+                self.len_side*self.len_side, self.n_r, self.n_c)
+            self.X_in[gpt_cnt] = a_tile[self.mask_range == 1].copy()
+            self.Y_label[gpt_cnt] = a_tile[self.mask_range == 0].copy()
     
     def reconstruct1D(self, out1D_viewed):
         n_pts = self.xx.shape[0]

@@ -83,3 +83,9 @@ History
 * bug removed from Normalize_4D
 * bug removed from SymmetrySTEM
 * tets added to locate atom and ...
+
+0.8.10 (2023-09-12)
+-------------------
+* bug removed from SymmetrySTEM and mirror is added
+* data_maker_4D can be updated
+* remove_islands_by_size bug fixed

@@ -161,8 +161,8 @@ def data4D_to_frame(data4D):
         would simply be (n_r+2)*n_x x (n_c+2)*n_y.    
     """
     n_x, n_y, n_r, n_c = data4D.shape
-    new_n_r = (n_r + 2) * n_x
-    new_n_c = (n_c + 2) * n_y
+    new_n_r = n_r * n_x
+    new_n_c = n_c * n_y
     canv = np.zeros((new_n_r, new_n_c), dtype=data4D.dtype)
     for xcnt in range(n_x):
         for ycnt in range(n_y):
@@ -195,7 +195,7 @@ def revalue_elements(vec, new_values = None, new_values_start = None):
             element has changed to have a new value.
             
     """
-    new_vec = vec.copy()
+    new_vec = 0*vec.copy() - np.inf
     old_values = np.unique(vec.ravel())
     if new_values is None:
         if new_values_start is None:

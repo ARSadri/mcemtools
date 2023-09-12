@@ -309,6 +309,8 @@ def remove_labels(label_map, labels_to_remove):
 
 def remove_islands_by_size(
         binImage, min_n_pix = 1, max_n_pix = np.inf, logger = None):    
+    import scipy.ndimage
+    
     segments_map, n_segments = scipy.ndimage.label(binImage)
     if(logger):
         logger(f'counted {n_segments} segments!')
