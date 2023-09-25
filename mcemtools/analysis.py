@@ -312,3 +312,56 @@ def locate_atoms(data4D, mask4D = None, min_distance = 3, filter_size = 3,
         
         coordinates = coordinates[inds]
     return coordinates
+
+def stem_image_nyquist_interpolation(
+        StemImage,xlen,ylen,alpha,Knought,npixout,npiyout):
+    """
+        StemImageNyquistInterpolation Nyquist interpolates a STEM image 
+        using Fourier methods. STEMImage has real space dimensions ylen 
+        and xlen in Angstrom - Note use of spatial coordinates
+        
+        alpha = probe-forming aperture semiangle in mrad 
+        Knought = vacuum wavevector (in inverse Angstrom)
+        
+        npixout,npiyout give number of pixels in x and y for output
+    """
+   
+    [npiy, npix] = np.shape(StemImage)   # Note use of spatial coordinates
+    qalpha = Knought * alpha * 1.0e-3    # Probe cutoff (in inverse Angstrom)
+    qband = 2.0 * qalpha    # STEM image bandwith limit (in inverse Angstrom)
+    qnyq = 2.0 * qband    # Nyquist spatial frequency (in inverse Angstrom)
+    # kxscale = 1/xlen
+    # kyscale = 1/ylen
+    # xscale = xlen/npix
+    # yscale = ylen/npiy
+
+    npixmin = np.ceil(xlen * qnyq)
+    npiymin = np.ceil(ylen * qnyq)
+   
+    if npix < npixmin or npiy < npiymin:
+        print('Input STEM image is insufficiently '
+              'sampled for Nyquist interpolation')
+       
+    # Ex-D'Alfonso implementation
+    ctemp2 = np.vectorize(complex)(StemImage)
+    ctemp2 = np.fft.fft2(ctemp2)
+    # ctemp2 = ctemp2 * sqrt(npiy*npix)
+       
+    Npos_y = round(np.floor(npiy/2))
+    Npos_x = round(np.floor(npix/2))
+     
+    shifty = npiy - Npos_y - 1
+    shiftx = npix - Npos_x - 1
+
+    ctemp2 = np.roll(np.roll(ctemp2,int(shifty),axis=0), int(shiftx), axis=1)
+
+    ctemp = np.vectorize(complex)(np.zeros((npiyout,npixout)))
+    ctemp[0:npiy,0:npix] = ctemp2
+
+    ctemp = np.roll(np.roll(ctemp,-int(shifty),axis=0),-int(shiftx),axis=1)
+   
+    StemImageInterpolated = np.real(np.fft.ifft2(ctemp))
+   
+    StemImageInterpolated = StemImageInterpolated * (npixout * npiyout) / (npix * npiy)
+   
+    return StemImageInterpolated

@@ -11,7 +11,7 @@ def dummy_function(*args, **kwargs): ...
 class viewer_4D:
     def __init__(self, data4D, 
                  statistics_4D = sum_4D,
-                 logger = dummy_function,
+                 logger = print,
                  sleep_between_moves = 0.5,
                  min_shape_edge_width = 2.0):
         import napari
@@ -170,6 +170,8 @@ class viewer_4D:
         
     def move(self, viewer, axis, sign):
         viewer_index = self.viewers_list.index(viewer)
+        if(len(viewer.layers) <= 1):
+            return
         time_since_last_move = time.time() - self.move_perv_time_time
         n_shapes = len(viewer.layers[1].data)
         selected_shape_cnt_list = list(viewer.layers[1].selected_data)

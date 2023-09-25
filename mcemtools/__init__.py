@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.8.9'
+__version__ = '0.8.11'
 
 from .mcemtools import viewer_4D
 

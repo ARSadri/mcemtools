@@ -89,3 +89,7 @@ History
 * bug removed from SymmetrySTEM and mirror is added
 * data_maker_4D can be updated
 * remove_islands_by_size bug fixed
+
+0.8.11 (2023-09-25)
+-------------------
+* Bug fixed in viewer_4D
