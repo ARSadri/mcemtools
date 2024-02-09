@@ -24,13 +24,12 @@ def normalize_4D(data4D, weights4D = None, method = 'loop'):
             else:
                 cbed *= 0
             if weights4D is not None:
-                data4D[x_cnt, y_cnt][weights4D[x_cnt, y_cnt] > 0] = cbed
+                data4D[x_cnt, y_cnt][weights4D[x_cnt, y_cnt] > 0] = cbed.copy()
             else:
-                data4D[x_cnt, y_cnt] = cbed
+                data4D[x_cnt, y_cnt] = cbed.copy()
     return data4D
 
-def calc_ccorr(inputs_to_iter_sliced: tuple, inputs_to_share: tuple):
-    CBED = inputs_to_iter_sliced[0]
+def calc_ccorr(CBED, inputs_to_share: tuple):
     mask_ang, nang, mflag = inputs_to_share
     
     vec_a = warp_polar(CBED)
@@ -65,27 +64,27 @@ def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False,
     else:
         mask_ang = warp_polar(np.ones((n_r, n_c)))
         
-    inputs_to_share = (mask_ang, nang, mflag, )
+    inputs_to_share = (mask_ang, nang, mflag)
     if use_multiprocessing:
-        inputs_to_iter = (data4D.reshape((n_x*n_y, n_r, n_c)), )
+        inputs_to_iter = data4D.reshape((n_x*n_y, n_r, n_c))
         from lognflow import multiprocessor
         corr_ang_auto = multiprocessor(
             calc_ccorr, 
-            inputs_to_iter = inputs_to_iter,
-            inputs_to_share = inputs_to_share,
+            iterables = inputs_to_iter,
+            shareables = inputs_to_share,
             outputs = np.zeros((n_x*n_y, nang)),
             verbose = verbose)
         corr_ang_auto = corr_ang_auto.reshape(
             (n_x, n_y, corr_ang_auto.shape[1]))
     
     else:
-        corr_ang_auto = np.zeros((n_x,n_y,nang))
+        corr_ang_auto = np.zeros((n_x, n_y, nang))
         if(verbose):
             pBar = printprogress(
                 n_x * n_y, title = f'Symmetry STEM for {n_x * n_y} patterns')
         for i in range(n_x):
             for j in range(n_y):
-                corr = calc_ccorr(data4D[i, j], inputs_to_share)
+                corr = calc_ccorr(np.array([data4D[i, j]]), inputs_to_share)
                 corr_ang_auto[i,j] = corr.copy()
                 if(verbose):
                     pBar()
@@ -129,7 +128,16 @@ def sum_4D(data4D, weight4D = None):
     totI = I4D_cpy.sum(3).sum(2).squeeze()
     return totI, PACBED
 
-def conv_4D(data4D, winXY, conv_function = sum_4D, skip = (1, 1)):
+def conv_4D_single(grc, sharables):
+    imgbywin, data4D = sharables
+    return data4D[grc[0]:grc[0] + imgbywin.win_shape[0], 
+                  grc[1]:grc[1] + imgbywin.win_shape[1]].sum((0, 1))
+    
+def conv_4D(data4D, 
+            winXY, 
+            conv_function = sum_4D, 
+            skip = (1, 1), 
+            use_mp = True):
     """
         :param conv_function:
             a function that returns a tuple, we will use the second element:
@@ -137,20 +145,33 @@ def conv_4D(data4D, winXY, conv_function = sum_4D, skip = (1, 1)):
             This function should return a 2D array at second position in the 
             tuple. For example sum_4D returns sum((0,1)) of the 4D array. 
     """
-    imgbywin = image_by_windows(
-                data4D.shape, winXY, skip = skip)
-    views = imgbywin.image2views(data4D)
-    for cnt, view in enumerate(views):
-        _, stat = conv_function(view)
-        views[cnt] = np.tile(np.array([np.array([stat])]), 
-                             (view.shape[0], view.shape[1], 1, 1)).copy()
-    data4D = imgbywin.views2image(views)
-    return data4D
+    imgbywin = image_by_windows(data4D.shape, winXY, skip = skip)
+    npts = len(imgbywin.grid)
+    if use_mp:
+        from lognflow import multiprocessor
+        data4D_cpy = multiprocessor(
+            conv_4D_single, imgbywin.grid, (imgbywin, data4D), verbose = True)
+    else:
+        pbar = printprogress(
+            len(imgbywin.grid),
+            title = f'conv_4D for {len(imgbywin.grid)} windows')
+        for gcnt, grc in enumerate(imgbywin.grid):
+            gr, gc = grc
+            view = data4D[gr:gr + imgbywin.win_shape[0], 
+                          gc:gc + imgbywin.win_shape[1]].copy()
+            _, stat = conv_function(view)
+            if gcnt == 0:
+                data4D_cpy = np.zeros((npts, ) + stat.shape, dtype = stat.dtype)
+            data4D_cpy[gcnt] = stat.copy()
+            pbar()
+    data4D_cpy = data4D_cpy.reshape(
+        imgbywin.grid_shape + (data4D_cpy.shape[1], data4D_cpy.shape[2]))
+    return data4D_cpy
 
 def bin_4D(data4D, 
-          n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
-          method_pos: str = 'skip', method_pix: str = 'linear',
-          conv_function = sum_4D, skip = (1, 1)):
+           n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
+           method_pos: str = 'skip', method_pix: str = 'linear',
+           conv_function = sum_4D, skip = (1, 1)):
     data4D = data4D.copy()
     if(n_pos_in_bin > 1):
         if(method_pos == 'skip'):
@@ -159,7 +180,6 @@ def bin_4D(data4D,
             data4D = conv_4D(
                 data4D, (n_pos_in_bin, n_pos_in_bin), conv_function,
                 skip = skip)
-            data4D = data4D[::n_pos_in_bin, ::n_pos_in_bin, :, :]
     if(n_pix_in_bin > 1):
         if(method_pix == 'skip'):
             data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
@@ -168,10 +188,9 @@ def bin_4D(data4D,
                 1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
             data4D = conv_4D(
                 data4D, (n_pix_in_bin, n_pix_in_bin), conv_function,
-                skip = skip)
+                skip = (n_pix_in_bin, n_pix_in_bin))
             data4D = data4D.swapaxes(
                 1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
-            data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
     return data4D
 
 def std_4D(data4D, mask4D = None):
@@ -279,38 +298,109 @@ def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
 
     data4D_a = normalize_4D(data4D_a.copy(), mask4D)
     data4D_b = normalize_4D(data4D_b.copy(), mask4D)
-    corr_mat  = (data4D_a * data4D_b).sum(3).sum(2)
+    corr_mat, _  = sum_4D(data4D_a * data4D_b, mask4D)
     
     if mask4D is not None:
         mask_STEM = mask4D.sum(3).sum(2)
         corr_mat[mask_STEM>0] /= mask_STEM[mask_STEM>0]
+        corr_mat[mask_STEM == 0] = 0
+    else:
+        corr_mat = corr_mat / data4D_a.shape[2] / data4D_a.shape[3]
     return corr_mat
 
-def locate_atoms(data4D, mask4D = None, min_distance = 3, filter_size = 3,
-                 reject_too_close = False):
+def locate_atoms(data4D, mask4D = None, min_distance = 3,
+                 maxfilter_size = 3, reject_too_close = False,
+                 bck_subtr_params = None):
     
-    totI, PACBED = sum_4D(data4D, mask4D)
+    n_x, n_y, _, _ = data4D.shape
+    STEM, _ = sum_4D(data4D, mask4D)
+    
+    nSTEM = STEM.max() -STEM.copy()
     
     from skimage.feature import peak_local_max
     import scipy.ndimage
-    _, _, n_r, n_c = data4D.shape
-    image_max = scipy.ndimage.maximum_filter(
-        -totI, size=filter_size, mode='constant')
-    coordinates = peak_local_max(-totI, min_distance=min_distance)
+    
+    if bck_subtr_params is not None:
+        from RobustGaussianFittingLibrary import fitBackground
+        mp = fitBackground(nSTEM,
+                           nSTEM > 0,
+                           winX = bck_subtr_params.winXY[0], 
+                           winY = bck_subtr_params.winXY[1],
+                           likelyRatio = bck_subtr_params.likelyRatio, 
+                           certainRatio = bck_subtr_params.certainRatio,
+                           MSSE_LAMBDA = bck_subtr_params.MSSE_LAMBDA,
+                           skip = bck_subtr_params.skip)
+        SNR = nSTEM - mp[0]
+        mpstd = mp[1]
+        SNR[mpstd > 0] /= mpstd[mpstd > 0]
+        SNR[mpstd == 0] = 0
+        nSTEM = SNR.copy()
+    
+    if maxfilter_size:
+        image_max = scipy.ndimage.maximum_filter(
+            nSTEM, size=maxfilter_size, mode='constant')
+    else:
+        image_max = nSTEM.copy()
+    coordinates = peak_local_max(image_max, min_distance=1)
+    
+    inds = []
     if(reject_too_close):
-        from RobustGaussianFittingLibrary import fitValue
+    
+        dist_coord_to_com = np.zeros(len(coordinates))
+        move_by_com = np.zeros((len(coordinates), 2))
+        for ccnt, coord in enumerate(coordinates):
+            r_start = coord[0] - min_distance
+            r_end   = coord[0] + min_distance + 1
+            c_start = coord[1] - min_distance
+            c_end   = coord[1] + min_distance + 1
+            
+            if ( r_end >= n_x):
+                r_end = n_x
+                r_start = 2 * coord[0] - r_end
+            if ( r_start < 0):
+                r_start = 0
+                r_end = 2 * coord[0]
+            if ( c_end >= n_y):
+                c_end = n_y
+                c_start = 2 * coord[1] - c_end
+            if ( c_start < 0):
+                c_start = 0
+                c_end = 2 * coord[1]
+            
+            local_stem = nSTEM[r_start: r_end, c_start: c_end].copy()
+            cy, cx = scipy.ndimage.center_of_mass(local_stem)
+            cx += 0.5
+            cy += 0.5
+            move_by_com[ccnt] = np.array([cx - local_stem.shape[0]/2,
+                                          cy - local_stem.shape[1]/2])
+            dist_coord_to_com[ccnt] = (
+                move_by_com[ccnt, 0]**2 + move_by_com[ccnt, 1]**2)**0.5
+            
+        try:
+            from RobustGaussianFittingLibrary import fitValue
+        except Exception as e:
+            print('You need to >>> pip install RobustGaussianFittingLibrary')
+            raise e
         dist2 = scipy.spatial.distance.cdist(coordinates, coordinates)
         dist2 = dist2 + np.diag(np.inf + np.zeros(coordinates.shape[0]))
-        mP = fitValue(dist2.min(1))
-        dist2_threshold = mP[0] - mP[1]
+        dist2_min = dist2.min(1)
+        mP = fitValue(dist2_min, MSSE_LAMBDA = 2.0)
+        dist2_threshold = mP[0] / 2
         dist2_threshold = np.minimum(dist2_threshold, dist2.min(1).mean())
+        dist2_cpy = dist2.copy()
         
-        inds = np.where(   (dist2_threshold < coordinates[:, 0])
-                         & (coordinates[:, 0] < n_r - dist2_threshold)
-                         & (dist2_threshold < coordinates[:, 1])
-                         & (coordinates[:, 1] < n_c - dist2_threshold)  )[0]
+        for single_ind, single_dist2 in enumerate(dist2_cpy):
+            _tmp = dist_coord_to_com[single_dist2 < dist2_threshold].copy()
+            if _tmp.any():
+                current_com = dist_coord_to_com[single_ind]
+                best_com = _tmp.min()
+                if current_com < best_com:
+                    inds.append(single_ind)
+            else:
+                inds.append(single_ind)
+        coordinates = coordinates + move_by_com
+        coordinates = coordinates[np.array(inds)]
         
-        coordinates = coordinates[inds]
     return coordinates
 
 def stem_image_nyquist_interpolation(

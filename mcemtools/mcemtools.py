@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from lognflow import printprogress, select_directory, lognflow
 from .analysis import sum_4D, swirl_and_sum
 from .masking import mask2D_to_4D
+from .transforms import data4D_to_frame
 import time
 
 def dummy_function(*args, **kwargs): ...
@@ -13,9 +14,13 @@ class viewer_4D:
                  statistics_4D = sum_4D,
                  logger = print,
                  sleep_between_moves = 0.5,
-                 min_shape_edge_width = 2.0):
+                 min_shape_edge_width = 2.0,
+                 title = 'viewer_4D'):
         import napari
-        self.data4D = data4D
+        try:
+            self.data4D = np.load(data4D)
+        except:
+            self.data4D = data4D
         self.statistics_4D = statistics_4D
         self.logger = logger
         self.sleep_between_moves = sleep_between_moves
@@ -23,12 +28,12 @@ class viewer_4D:
         
         self.data4D_shape = self.data4D.shape
         self.data4D_shape_list = np.array(self.data4D_shape)
-        self.viewers_list = [napari.Viewer(), napari.Viewer()]
+        self.viewers_list = [napari.Viewer(title = title + '_STEM'), 
+                             napari.Viewer(title = title + '_PACBED')]
         STEM_img, PACBED = self.statistics_4D(self.data4D)
         self.viewers_list[0].add_image(PACBED)
         self.viewers_list[1].add_image(STEM_img)
         
-        #, Down, Left, Right
         for viewer_cnt in range(2):
             self.viewers_list[viewer_cnt].bind_key(
                 key = 'Up', func = self.move_up)
@@ -41,7 +46,9 @@ class viewer_4D:
             self.viewers_list[viewer_cnt].bind_key(
                 key = 'i', func = self.print_shape_info)
             self.viewers_list[viewer_cnt].bind_key(
-                key = 'm', func = self.show_mask)
+                key = 'm', func = self.show_frame4D)
+            self.viewers_list[viewer_cnt].bind_key(
+                key = 'f', func = self.show_mask)
             self.viewers_list[viewer_cnt].bind_key(
                 key = 'F5', func = self.update_by_masked_sum_4D)
         
@@ -132,7 +139,6 @@ class viewer_4D:
             mask2D = self.get_mask2D(viewer.layers[1], data4D_shape_select)
         
         if( (self.mask2D_list[viewer_index] != mask2D).sum()>0):
-            self.logger('updating mask...')
             self.mask2D_list.__setitem__(viewer_index, mask2D.copy())
             mask4D = np.zeros(self.data4D_shape, dtype='int8')
             if(viewer_index == 0):
@@ -167,6 +173,43 @@ class viewer_4D:
         self.logger(f'shape_type:{viewer.layers[1].shape_type}')
         self.logger(f'data:{viewer.layers[1].data}')
         self.logger(f'edge_width:{viewer.layers[1].edge_width}')
+    
+    def show_frame4D(self, viewer):
+        self.logger('show_frame4D')
+        viewer_index = self.viewers_list.index(viewer)
+        self.logger(f'viewer_index " {viewer_index}')
+        data4D_shape_select = viewer.layers[0].data.shape
+        mask2D = np.ones(data4D_shape_select, dtype='int8')
+        if(len(viewer.layers) > 1):
+            mask2D = self.get_mask2D(viewer.layers[1], data4D_shape_select)
+        
+        self.logger(f'mask2D.sum() " {mask2D.sum()}')
+        if(mask2D.sum() > 0):
+            _data4D = self.data4D.copy()
+            if(viewer_index == 0):
+                _data4D[:, :, mask2D == 0] = 0
+            if(viewer_index == 1):
+                _data4D[mask2D == 0] = 0
+            indi, indj = np.where(mask2D == 1)
+            _data4D = _data4D[indi.min():indi.max(), indj.min():indj.max()]
+            framed4D = data4D_to_frame(_data4D)
+            try:
+                self.logger.log_single(
+                    'mask_for_frame', self.mask2D_list[viewer_index])
+                self.logger.log_single(
+                    'framed4D', framed4D)
+            except:
+                pass
+            plt.figure()
+            plt.imshow(self.mask2D_list[viewer_index])
+            plt.title(f'mask for viewer {viewer_index}')
+            plt.figure()
+            plt.imshow(framed4D)
+            plt.title(f'framed4D for viewer {viewer_index}')
+            plt.show()
+        else:
+            self.logger('No mask is selected, and I am surely not turning ' + \
+                        'the whole datset into a frame')
         
     def move(self, viewer, axis, sign):
         viewer_index = self.viewers_list.index(viewer)

@@ -111,6 +111,7 @@ class image_by_windows:
                 0, n_c - win_shape[1],n_r // skip_c, dtype = 'int')
             clms = np.unique(clms)
         grid_clms, grid_rows = np.meshgrid(clms, rows)
+        self.grid_shape = (len(rows), len(clms))
         self.grid = np.array([grid_rows.ravel(), grid_clms.ravel()]).T
         self.n_pts = self.grid.shape[0]
         

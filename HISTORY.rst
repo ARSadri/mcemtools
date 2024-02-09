@@ -93,3 +93,8 @@ History
 0.8.11 (2023-09-25)
 -------------------
 * Bug fixed in viewer_4D
+
+0.9.0 (2023-10-13)
+-------------------
+* added denoise4net
+* added clustering4net and feature_maker_4D
