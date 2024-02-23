@@ -36,7 +36,8 @@ def tensor_svd_denoise(data, rank):
         [X, _, _] = svd_HO(data, rank)
     if len(data.shape) == 4:
         data = np.reshape(data, [data.shape[0], data.shape[1], data.shape[2]*data.shape[3]])
-        [X, _, _] = svd_HO(data, rank)
+        out = svd_HO(data, rank)
+        X = out[0]
     
     return X
 

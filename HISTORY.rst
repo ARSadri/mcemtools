@@ -98,3 +98,9 @@ History
 -------------------
 * added denoise4net
 * added clustering4net and feature_maker_4D
+
+0.9.1 (2024-02-23)
+-------------------
+* added denoise4_tsvd
+* faster bin_4D
+* torch handler does not update the model if the loss is inf or nan

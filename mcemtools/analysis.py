@@ -51,8 +51,52 @@ def calc_ccorr(CBED, inputs_to_share: tuple):
         rot = np.roll(rot, 1, axis=0)
     return corr
 
+def calc_symm(CBED, inputs_to_share: tuple):
+    mask_ang, nang, mflag = inputs_to_share
+    
+    polar = warp_polar(CBED)
+    kvec = np.tile(np.array([np.arange(_polar.shape[0])]).swapaxes(0, 1),
+                (1, nang))/(nang/2/np.pi)
+    polar[mask_ang == 0] = 0
+    
+    """
+        perform angular autocorrelation or autoconvolutiuon using Fourier
+        correlation theorems.
+        note: one difference between the above symmetry measures is the
+        presence/absence of the absolute value. The other difference is that
+        the symmetry angle is halved for the mirrors, since a similarity
+        transform is implied to rotate, perform inversion, then rotate back.
+    """
+    if mflag == 1: #mirror symmetries
+        polar_fft_ifft = \
+            np.real(np.fft.ifft((np.fft.fft(polar,nang,2))**2,nang,2))
+    else:          #rotational symmetries
+        polar_fft_ifft = \
+            np.real(np.fft.ifft(np.abs(np.fft.fft(polar,nang,1))**2,nang,1))
+      
+    """
+        multiply array to account for Jacobian polar r weighting (here kvec). 
+        Integrate over radius in the diffraction patter - one could also
+        mask the pattern beforehand, as in ACY Liu's correlogram approach.
+    """
+    corr = np.sum(polar_fft_ifft*kvec)
+    
+    """
+        notice the deliberate omission of fftshift above.     
+        factors of nang and 2*pi are for numerical comparison to the Riemann
+        sum integrals in the Cartesian case.
+        normalise with respect to no symmetry operation.  For accurate
+        normalisation, include otherwise redundant polar coordinate 
+        conversion and subsequent squaring.
+    """
+    corr = corr/np.sum(np.sum((polar**2)*kvec[:, :polar.shape[1]]))
+    
+    return corr
+
+
 def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False, 
-             verbose = True, use_multiprocessing = True):
+             verbose = True, use_multiprocessing = False,
+             use_autoconvolutiuon = True):
     
     n_x, n_y, n_r, n_c = data4D.shape
     
@@ -63,20 +107,20 @@ def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False,
         mask_ang = warp_polar(mask2D.copy())
     else:
         mask_ang = warp_polar(np.ones((n_r, n_c)))
-        
+    
     inputs_to_share = (mask_ang, nang, mflag)
+    
     if use_multiprocessing:
         inputs_to_iter = data4D.reshape((n_x*n_y, n_r, n_c))
         from lognflow import multiprocessor
         corr_ang_auto = multiprocessor(
-            calc_ccorr, 
-            iterables = inputs_to_iter,
+            calc_symm if use_autoconvolutiuon else calc_ccorr, 
+            iterables = (inputs_to_iter, ),
             shareables = inputs_to_share,
-            outputs = np.zeros((n_x*n_y, nang)),
             verbose = verbose)
         corr_ang_auto = corr_ang_auto.reshape(
             (n_x, n_y, corr_ang_auto.shape[1]))
-    
+        corr_ang_auto /= (mask_ang > 0).sum()
     else:
         corr_ang_auto = np.zeros((n_x, n_y, nang))
         if(verbose):
@@ -84,12 +128,15 @@ def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False,
                 n_x * n_y, title = f'Symmetry STEM for {n_x * n_y} patterns')
         for i in range(n_x):
             for j in range(n_y):
-                corr = calc_ccorr(np.array([data4D[i, j]]), inputs_to_share)
+                if use_autoconvolutiuon:
+                    corr = calc_symm(data4D[i, j], inputs_to_share)
+                else:
+                    corr = calc_ccorr(data4D[i, j], inputs_to_share)
                 corr_ang_auto[i,j] = corr.copy()
                 if(verbose):
                     pBar()
+        corr_ang_auto /= (mask_ang > 0).sum()
     
-    corr_ang_auto /= (mask_ang > 0).sum()
     return corr_ang_auto
 
 def swirl_and_sum(img):
@@ -168,22 +215,76 @@ def conv_4D(data4D,
         imgbywin.grid_shape + (data4D_cpy.shape[1], data4D_cpy.shape[2]))
     return data4D_cpy
 
+def bin_image(data, factor = 2, logger = print):
+    """ bin image rapidly, simply by summing every "factor" number of pixels.
+    :param data: 
+        must have at least 2 dimensions 
+    :param factor:
+        data will be binned rapidly by the given factor. it 2 by default.
+    :param logger:
+        should have a __call__, it is print by default.
+    """
+    assert factor == int(factor), f'Binning factor must be integer, it is {factor}'
+    data_shape = data.shape
+    n_x, n_y = data_shape[0], data_shape[1]
+    if len(data_shape) > 2:
+        data_binned = np.zeros((int(n_x/factor), int(n_y/factor), *data_shape[2:]),
+                               dtype = data.dtype)
+    else:
+        data_binned = np.zeros((int(n_x/factor), int(n_y/factor)), 
+                               dtype = data.dtype)
+    inds_i, inds_j = np.where(np.ones((n_x, n_y)) > 0)
+    logger(f'bin_image start for dataset of shape {data_shape}...')
+    logger('top left')
+    data_binned[
+        (inds_i[::factor]/factor).astype('int'), 
+        (inds_j[::factor]/factor).astype('int')] += \
+            data[inds_i[::factor], inds_j[::factor]]
+    logger('top right')
+    data_binned[
+        (inds_i[1::factor]/factor).astype('int'), 
+        (inds_j[::factor]/factor).astype('int')] += \
+            data[inds_i[1::factor], inds_j[::factor]]
+    logger('bot left')
+    data_binned[
+        (inds_i[::factor]/factor).astype('int'), 
+        (inds_j[1::factor]/factor).astype('int')] += \
+            data[inds_i[::factor], inds_j[1::factor]]
+    logger('bot right')
+    data_binned[
+        (inds_i[1::factor]/factor).astype('int'), 
+        (inds_j[1::factor]/factor).astype('int')] += \
+            data[inds_i[1::factor], inds_j[1::factor]]
+    logger(f'... bin_image done with shape {data_binned.shape}')
+    return data_binned
+
 def bin_4D(data4D, 
            n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
            method_pos: str = 'skip', method_pix: str = 'linear',
-           conv_function = sum_4D, skip = (1, 1)):
+           conv_function = sum_4D, skip = (1, 1), logger = print):
+    """
+    options for methods are: skip, linear and conv
+    """
     data4D = data4D.copy()
     if(n_pos_in_bin > 1):
         if(method_pos == 'skip'):
             data4D = data4D[::n_pos_in_bin, ::n_pos_in_bin]
         if(method_pos == 'linear'):
-            data4D = conv_4D(
-                data4D, (n_pos_in_bin, n_pos_in_bin), conv_function,
-                skip = skip)
+            data4D = bin_image(data4D, n_pos_in_bin, logger = logger)
+        if(method_pos == 'conv'):
+                data4D = conv_4D(
+                    data4D, (n_pos_in_bin, n_pos_in_bin), conv_function,
+                    skip = skip)
     if(n_pix_in_bin > 1):
         if(method_pix == 'skip'):
             data4D = data4D[:, :, ::n_pix_in_bin, ::n_pix_in_bin]
         if(method_pix == 'linear'):
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+            data4D = bin_image(data4D, n_pix_in_bin, logger = logger)
+            data4D = data4D.swapaxes(
+                1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
+        if(method_pix == 'conv'):
             data4D = data4D.swapaxes(
                 1,2).swapaxes(0,1).swapaxes(2,3).swapaxes(1,2)
             data4D = conv_4D(
@@ -237,7 +338,6 @@ def std_4D(data4D, mask4D = None):
     PACBED[-1, -1] = 2
     
     return totI, PACBED
-
 
 def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
     """ modified from py4DSTEM

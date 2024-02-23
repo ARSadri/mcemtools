@@ -178,7 +178,8 @@ def train_I4D(
         trainable_inds = None,
         perv_loss = None,
         infer_size_I4D = 1,
-        ETA_base = 0):
+        ETA_base = 0,
+        max_n_ValueError = 5):
 
     if(trainable_inds is None):
         trainable_inds = np.arange(data_gen_I4D.n_pts , dtype='int')
@@ -198,6 +199,7 @@ def train_I4D(
     status = True
     time_time = time.time()
     DATOS_sampler_I4D_n_pos = DATOS_sampler_I4D.n_pos
+    ValueError_cnt = 0
     pBar = printprogress(DATOS_sampler_I4D.n_pos, print_function = None)
     while(status):
         DATOS_inds, status = DATOS_sampler_I4D()
@@ -208,11 +210,23 @@ def train_I4D(
             inds = trainable_inds[DATOS_inds].copy()
             loss = torch_handler_I4D.update(inds)
             if np.isinf(loss):
-                logger('inf' + '.'*50 + f' {inds}')
-                raise ValueError
+                ValueError_cnt += 1
+                logger(f'inf no. {ValueError_cnt}' + '.'*30 + f' {inds}')
+                if ValueError_cnt > max_n_ValueError:
+                    raise ValueError
+                else:
+                    continue
+            else:
+                ValueError_cnt = 0
             if np.isnan(loss):
-                logger('nan' + '.'*50 + f' {inds}')
-                raise ValueError
+                ValueError_cnt += 1
+                logger(f'nan no. {ValueError_cnt}' + '.'*30 + f' {inds}')
+                if ValueError_cnt > max_n_ValueError:
+                    raise ValueError
+                else:
+                    continue
+            else:
+                ValueError_cnt = 0
             
             logger.log_var('I4D_denoiser/train/training_loss', loss)
             if (time.time() - time_time > 10) :
@@ -279,10 +293,11 @@ def denoise4net(
     if(include_training):
         if(not log_exist_ok):
             logged = logviewer(logs_root)
-            exp_list_names = logged.get_flist(f'{exp_name}*')
+            exp_list_names = logged.get_flist(
+                f'denoised*/I4D_denoiser/I4D_denoised/denoised_*.npy')
             if len(exp_list_names)>0:
                 return
-        logger = lognflow(logs_root, log_dir_prefix = exp_name)
+        logger = lognflow(logs_root, log_dir_prefix = 'denoised4D_UNet')
     else:
         if(not log_exist_ok):
             logger = lognflow(logs_root)
@@ -449,7 +464,7 @@ def denoise4net(
             data4D_noisy_new = data4D_noisy_new.reshape(n_x, n_y, n_r, n_c)
             denoised_STEM, _ = mcemtools.sum_4D(data4D_noisy_new)
     else:
-        data4D_noisy_new = data4D_noisy
+        data4D_noisy_new = data4D_noisy.copy()
         denoised_STEM, _ = mcemtools.sum_4D(data4D_noisy_new)
     ########################################################################
     #### Declaring I4D model, loss and data maker ######################
@@ -581,7 +596,7 @@ def denoise4net(
         lossFunc = criterion_I4D,
         device = device,
         logger = logger,
-        learning_rate = hyps_I4D['learning_rate'],
+        learning_rate = 1e-5,
         momentum = hyps_I4D['momentum'],
         pass_indices_to_model = True,
         fix_during_infer = True) 
@@ -596,6 +611,7 @@ def denoise4net(
         if kcnt == 0:
             n_epochs = 1
         else:
+            torch_handler_I4D.update_learning_rate(hyps_I4D['learning_rate'])
             n_epochs = hyps_I4D['n_epochs']
 
         if kcnt < hyps_I4D['n_ksweeps'] / 2:
@@ -685,6 +701,13 @@ def denoise4net(
             break
         
     logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
+    
+    frame_denoised = mcemtools.data4D_to_frame(data4D_noisy_new)
+    frame_nonoise = mcemtools.data4D_to_frame(data4D_nonoise)
+    frame_noisy = mcemtools.data4D_to_frame(data4D_noisy)
+    logger.log_single('I4D_denoiser/canvases/denoised', frame_denoised)
+    logger.log_single('I4D_denoiser/canvases/nonoise', frame_nonoise)
+    logger.log_single('I4D_denoiser/canvases/noisy', frame_noisy)
     
     logger('--\|/'*16)
     logger_dir = logger.log_dir

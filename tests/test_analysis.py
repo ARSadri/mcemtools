@@ -87,7 +87,7 @@ if __name__ == '__main__':
     test_sum_4D()
     test_normalize_4D()
 
-    if(pathlib.Path('data4D.npy').is_file()):
+    if(pathlib.Path('location_of_a_4DSTEM_dataset.npy').is_file()):
         test_SymmSTEM_with_data()
         test_normalize_4D_with_data()
 

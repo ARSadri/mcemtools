@@ -771,7 +771,6 @@ def test_ResNet18():
     y = rnet18(x).to('cuda')
     print(y.shape)
 
-
 class denoise4DSTEM_resNet(nn.Module):
     def __init__(self, 
                  img_ch=1, output_ch=1,

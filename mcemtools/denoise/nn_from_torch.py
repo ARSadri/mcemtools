@@ -20,7 +20,7 @@ class nn_from_torch:
                  device,
                  logger = print,
                  pass_indices_to_model = False,
-                 learning_rate = 1e-9,
+                 learning_rate = 1e-6,
                  momentum = 0,
                  fix_during_infer = False):
         """ Using pytorch 
@@ -67,8 +67,11 @@ class nn_from_torch:
         if(not torch.is_tensor(labels)):
             labels = torch.from_numpy(labels).float().to(self.device)
         loss = self.lossFunc(preds, labels, indices)
-        loss.backward()
-        self.optimizer.step()            
+        if torch.isinf(loss) | torch.isnan(loss):
+            self.optimizer.zero_grad()
+        else:
+            loss.backward()
+            self.optimizer.step()            
         loss = loss.detach().to('cpu').numpy()
         torch.cuda.empty_cache()
         return loss

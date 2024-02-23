@@ -34,23 +34,15 @@ class viewer_4D:
         self.viewers_list[0].add_image(PACBED)
         self.viewers_list[1].add_image(STEM_img)
         
-        for viewer_cnt in range(2):
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'Up', func = self.move_up)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'Down', func = self.move_down)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'Left', func = self.move_left)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'Right', func = self.move_right)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'i', func = self.print_shape_info)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'm', func = self.show_frame4D)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'f', func = self.show_mask)
-            self.viewers_list[viewer_cnt].bind_key(
-                key = 'F5', func = self.update_by_masked_sum_4D)
+        for viewer in self.viewers_list:
+            viewer.bind_key(key = 'Up'   , func = self.move_up)
+            viewer.bind_key(key = 'Down' , func = self.move_down)
+            viewer.bind_key(key = 'Left' , func = self.move_left)
+            viewer.bind_key(key = 'Right', func = self.move_right)
+            viewer.bind_key(key = 'i'    , func = self.print_shape_info)
+            viewer.bind_key(key = 'm'    , func = self.show_mask)
+            viewer.bind_key(key = 'f'    , func = self.show_frame4D)
+            viewer.bind_key(key = 'F5'   , func = self.update_by_masked_sum_4D)
         
         self.viewers_list[0].mouse_drag_callbacks.append(self.mouse_drag_event)
         self.viewers_list[1].mouse_drag_callbacks.append(self.mouse_drag_event)
@@ -66,6 +58,7 @@ class viewer_4D:
     def show_mask(self, viewer):
         self.update_by_masked_sum_4D(viewer)
         viewer_index = self.viewers_list.index(viewer)
+        self.logger(f'showing mask for viewer {viewer_index}')
         try:
             self.logger.log_single(
                 'mask', self.mask2D_list[viewer_index],time_tag = False)
@@ -175,9 +168,8 @@ class viewer_4D:
         self.logger(f'edge_width:{viewer.layers[1].edge_width}')
     
     def show_frame4D(self, viewer):
-        self.logger('show_frame4D')
         viewer_index = self.viewers_list.index(viewer)
-        self.logger(f'viewer_index " {viewer_index}')
+        self.logger(f'showing frame for viewer {viewer_index}')
         data4D_shape_select = viewer.layers[0].data.shape
         mask2D = np.ones(data4D_shape_select, dtype='int8')
         if(len(viewer.layers) > 1):
@@ -200,9 +192,6 @@ class viewer_4D:
                     'framed4D', framed4D)
             except:
                 pass
-            plt.figure()
-            plt.imshow(self.mask2D_list[viewer_index])
-            plt.title(f'mask for viewer {viewer_index}')
             plt.figure()
             plt.imshow(framed4D)
             plt.title(f'framed4D for viewer {viewer_index}')
