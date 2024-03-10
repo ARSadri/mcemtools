@@ -219,5 +219,6 @@ class nn_from_torch:
                 if(show_progress):
                     pbar(pt_stop - pt_start)
                 pt_start = pt_stop
+        torch.cuda.empty_cache()
         self.torchModel.train()
         return(losses, predictions_stat_list, predictions)

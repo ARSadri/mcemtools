@@ -104,3 +104,7 @@ History
 * added denoise4_tsvd
 * faster bin_4D
 * torch handler does not update the model if the loss is inf or nan
+
+0.9.2 (2024-03-23)
+-------------------
+* annular mask can handle even sized image

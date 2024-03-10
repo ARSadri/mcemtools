@@ -201,9 +201,6 @@ class U_Net(nn.Module):
 
         d1 = self.Conv_1x1(d2)
 
-        if(self.mask is not None):
-            d1[:, :, self.mask==0] = 0 
-
         d1 = d1 ** 2
         
         for dim in range(d1.shape[0]):
@@ -214,6 +211,10 @@ class U_Net(nn.Module):
                 d1[dim] *= self.mu_eaxct[inds[dim]]
             if(self.mu is not None):
                 d1[dim] *= self.mu[inds[dim]]
+
+        if(self.mask is not None):
+            d1[:, :, self.mask==0] = 0 
+        
         return d1
         
 

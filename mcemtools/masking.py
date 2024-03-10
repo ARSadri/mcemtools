@@ -40,12 +40,19 @@ def annular_mask(image_shape : tuple,
     """
     n_r, n_c = image_shape
     if centre is None: # use the middle of the image
-        centre = (int(n_r/2), int(n_c/2))
+        # centre = (int(n_r/2), int(n_c/2))
+        centre = (n_r/2, n_c/2)
     if radius is None: 
         # use the smallest distance between the centre and image walls
         radius = np.minimum(centre[0], centre[1])
 
     Y, X = np.ogrid[:n_r, :n_c]
+    
+    if n_r/2 == n_r//2:
+        Y = Y + 0.49
+    if n_c/2 == n_c//2:
+        X = X + 0.49
+    
     dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 
     mask = dist_from_centre <= radius

@@ -211,21 +211,25 @@ def train_I4D(
             loss = torch_handler_I4D.update(inds)
             if np.isinf(loss):
                 ValueError_cnt += 1
+                ValueError_reset = False
                 logger(f'inf no. {ValueError_cnt}' + '.'*30 + f' {inds}')
                 if ValueError_cnt > max_n_ValueError:
                     raise ValueError
                 else:
                     continue
             else:
-                ValueError_cnt = 0
+                ValueError_reset = True
             if np.isnan(loss):
                 ValueError_cnt += 1
+                ValueError_reset = False
                 logger(f'nan no. {ValueError_cnt}' + '.'*30 + f' {inds}')
                 if ValueError_cnt > max_n_ValueError:
                     raise ValueError
                 else:
                     continue
             else:
+                ValueError_reset = True
+            if ValueError_reset:
                 ValueError_cnt = 0
             
             logger.log_var('I4D_denoiser/train/training_loss', loss)
@@ -283,7 +287,9 @@ def denoise4net(
     criterion_I4D_LAGMUL,
     use_classes_by_scattering,
     use_repeat_by_scattering,
-    use_denoised_STEM,
+    use_pre_denoised_STEM,
+    STEM_denoiser_model_type,
+    rank_info = None,
     ):
 
     FLAG_train_STEM, FLAG_train_I4D = include_training
@@ -304,12 +310,19 @@ def denoise4net(
         else:
             logger = lognflow(log_dir = pretrained_fpath_I4D.parent.parent)    
 
-    logged_ref     = logviewer(ref_dir)
-    data4D_noisy   = logged_ref.get_single('noisy.npy')
-    data4D_nonoise = logged_ref.get_single('nonoise.npy')
-    if use_denoised_STEM:
+    logged_ref            = logviewer(ref_dir)
+    data4D_noisy          = logged_ref.get_single('noisy.npy')
+    data4D_noisy_diffused = logged_ref.get_single('data4D_noisy_diffused.npy')
+    data4D_nonoise        = logged_ref.get_single('nonoise.npy')
+    if data4D_noisy_diffused is None:
+        data4D_noisy_diffused = data4D_noisy
+        
+    if(True):
+        data4D_noisy = data4D_noisy_diffused.copy()
+    
+    if use_pre_denoised_STEM:
         denoised_STEM  = logged_ref.get_single('denoised_STEM.npy')
-        assert denoised_STEM is not None, 'set use_denoised_STEM = False'
+        assert denoised_STEM is not None, 'set use_pre_denoised_STEM = False'
     
     data4D_shape = data4D_noisy.shape
     n_x, n_y, n_r, n_c = data4D_shape
@@ -348,102 +361,112 @@ def denoise4net(
     logger.log_imshow('nonoise/STEM', nonoise_STEM)
     logger.log_single('nonoise/nonoise_PACBED', nonoise_PACBED)
     logger.log_imshow('nonoise/PACBED', nonoise_PACBED)
-    
+    data4D_noisy_shape = data4D_noisy.shape
     #### denoising of STEM image ##########################################
     if(FLAG_denoise_STEM):
-        if not use_denoised_STEM:
-            denoise_STEM_mask_4D = None
-            if denoise_STEM_mask is not None:
-                denoise_STEM_mask = mcemtools.mask2D_to_4D(
-                    denoise_STEM_mask, data4D_shape)
+        if not use_pre_denoised_STEM:
+            if STEM_denoiser_model_type == 'UNET':
                 
-            noisy_STEM_BF, noisy_PACBED_BF = mcemtools.sum_4D(
-                data4D_noisy, denoise_STEM_mask)
-            
-            logger.log_imshow('STEM_denoiser/noisy_STEM_BF', noisy_STEM_BF, 
-                              time_tag = False)
-            logger.log_imshow('STEM_denoiser/noisy_PACBED_BF', noisy_PACBED_BF, 
-                              time_tag = False)
-            
-            data_gen_STEM = mcemtools.data_maker_2D(
-                noisy_STEM_BF.copy(), noisy_STEM_BF.copy(), 
-                win_shape = (hyps_STEM['win_length'], hyps_STEM['win_length']),
-                skip = (hyps_STEM['skip_length'], hyps_STEM['skip_length']),
-                mask_rate = hyps_STEM['mask_rate'])
-    
-            trainable_mask_viewed = data_gen_STEM.imbywin.image2views(
-                trainable_area_STEM2D)
-            trainable_mask_viewed_sums = trainable_mask_viewed.mean((1,2))
-            trainable_inds = np.where(
-                trainable_mask_viewed_sums == trainable_mask_viewed_sums.max())[0]
-            trainable_mask_viewed *= 0
-            trainable_mask_viewed[trainable_inds] += 1
-            trainable_mask = data_gen_STEM.imbywin.views2image(
-                trainable_mask_viewed)
-            
-            logger.log_imshow('STEM_denoiser/trainable_mask', trainable_mask, 
-                              cmap = 'prism', time_tag = False)
-            logger.log_imshow('STEM_denoiser/trainable_mask', trainable_mask > 0, 
-                              cmap = 'gray', time_tag = False)
-            logger.log_single('STEM_denoiser/trainable_mask', trainable_mask, 
-                              time_tag = False)
-            #### models definition #################################################
-            torchModel_STEM = network2D(
-                n_kernels = hyps_STEM['n_kernels'], 
-                Ne_input = Ne_estimated)
-            if(pretrained_fpath_STEM.is_file()):
-                logger(f'Using: {pretrained_fpath_STEM}')
-                torchModel_STEM.load_state_dict(
-                    torch.load(pretrained_fpath_STEM), strict=False)
-                torchModel_STEM.Ne_input = float(
-                    np.load(pretrained_fpath_STEM.parent / 'Ne_input.npy'))
-                torchModel_STEM.Ne_output = float(
-                    np.load(pretrained_fpath_STEM.parent / 'Ne_output.npy'))
-            torchModel_STEM = torchModel_STEM.float().to(device)
-            
-            criterion_STEM = mseLoss()
-            torch_handler_STEM = \
-                nn_from_torch(
-                    data_generator = data_gen_STEM,
-                    torchModel = torchModel_STEM,
-                    lossFunc = criterion_STEM,
-                    device = device,
-                    logger = logger,
-                    learning_rate = hyps_STEM['learning_rate'],
-                    momentum = hyps_STEM['momentum'],
-                    pass_indices_to_model = False) 
-            
-            _, denoised_STEM = infer_STEM(torch_handler_STEM,  data_gen_STEM, 
-                                          logger,hyps_STEM['infer_size_STEM'])
-            torchModel_STEM.Ne_output = Ne_estimated/denoised_STEM.mean()
-            if(FLAG_train_STEM):
-                DATOS_sampler_STEM = DATOS(trainable_inds.shape[0], 
-                                         n_segments = hyps_STEM['n_segments'],
-                                         mbatch_size = hyps_STEM['mbatch_size'],
-                                         n_epochs = hyps_STEM['n_epochs'])
-                model_path = train_STEM(hyps_STEM['n_kSweeps'], 
-                                      torch_handler_STEM, 
-                                      data_gen_STEM,
-                                      logger, 
-                                      DATOS_sampler_STEM,
-                                      trainable_inds,
-                                      hyps_STEM['infer_size_STEM'],
-                                      hyps_STEM['mask_rate'])
-                logger(f'Training STEM image denoising is finished.')
-                logger(f'Model is at: {model_path.absolute()}')
-    
-            _, denoised_STEM = infer_STEM(torch_handler_STEM, 
-                                      data_gen_STEM, logger, 
-                                      hyps_STEM['infer_size_STEM'])
-            logger.log_single('STEM_denoiser/denoised_STEM.npy', denoised_STEM)
-            logger.log_imshow('STEM_denoiser/denoised_STEM.jpg', denoised_STEM)
-            denoised_STEM_mean = denoised_STEM.mean()
-            if ( (denoised_STEM_mean < Ne_estimated / 2) |
-                 (denoised_STEM_mean > Ne_estimated * 2) ):
-                logger('The STEM denoiser was unsuccessful'
-                       f'The estimated Ne was {Ne_estimated}, but the STEM denoiser '
-                       f'came up with {denoised_STEM_mean}')
-                raise ValueError
+                denoise_STEM_mask_4D = None
+                if denoise_STEM_mask is not None:
+                    denoise_STEM_mask = mcemtools.mask2D_to_4D(
+                        denoise_STEM_mask, data4D_shape)
+                    
+                noisy_STEM_BF, noisy_PACBED_BF = mcemtools.sum_4D(
+                    data4D_noisy, denoise_STEM_mask)
+                
+                logger.log_imshow('STEM_denoiser/noisy_STEM_BF', noisy_STEM_BF, 
+                                  time_tag = False)
+                logger.log_imshow('STEM_denoiser/noisy_PACBED_BF', noisy_PACBED_BF, 
+                                  time_tag = False)
+                
+                data_gen_STEM = mcemtools.data_maker_2D(
+                    noisy_STEM_BF.copy(), noisy_STEM_BF.copy(), 
+                    win_shape = (hyps_STEM['win_length'], hyps_STEM['win_length']),
+                    skip = (hyps_STEM['skip_length'], hyps_STEM['skip_length']),
+                    mask_rate = hyps_STEM['mask_rate'])
+        
+                trainable_mask_viewed = data_gen_STEM.imbywin.image2views(
+                    trainable_area_STEM2D)
+                trainable_mask_viewed_sums = trainable_mask_viewed.mean((1,2))
+                trainable_inds = np.where(
+                    trainable_mask_viewed_sums == trainable_mask_viewed_sums.max())[0]
+                trainable_mask_viewed *= 0
+                trainable_mask_viewed[trainable_inds] += 1
+                trainable_mask = data_gen_STEM.imbywin.views2image(
+                    trainable_mask_viewed)
+                
+                logger.log_imshow('STEM_denoiser/trainable_mask', trainable_mask, 
+                                  cmap = 'prism', time_tag = False)
+                logger.log_imshow('STEM_denoiser/trainable_mask', trainable_mask > 0, 
+                                  cmap = 'gray', time_tag = False)
+                logger.log_single('STEM_denoiser/trainable_mask', trainable_mask, 
+                                  time_tag = False)
+                #### models definition #################################################
+                torchModel_STEM = network2D(
+                    n_kernels = hyps_STEM['n_kernels'], 
+                    Ne_input = Ne_estimated)
+                if(pretrained_fpath_STEM.is_file()):
+                    logger(f'Using: {pretrained_fpath_STEM}')
+                    torchModel_STEM.load_state_dict(
+                        torch.load(pretrained_fpath_STEM), strict=False)
+                    torchModel_STEM.Ne_input = float(
+                        np.load(pretrained_fpath_STEM.parent / 'Ne_input.npy'))
+                    torchModel_STEM.Ne_output = float(
+                        np.load(pretrained_fpath_STEM.parent / 'Ne_output.npy'))
+                torchModel_STEM = torchModel_STEM.float().to(device)
+                
+                criterion_STEM = mseLoss()
+                torch_handler_STEM = \
+                    nn_from_torch(
+                        data_generator = data_gen_STEM,
+                        torchModel = torchModel_STEM,
+                        lossFunc = criterion_STEM,
+                        device = device,
+                        logger = logger,
+                        learning_rate = hyps_STEM['learning_rate'],
+                        momentum = hyps_STEM['momentum'],
+                        pass_indices_to_model = False) 
+                
+                _, denoised_STEM = infer_STEM(torch_handler_STEM,  data_gen_STEM, 
+                                              logger,hyps_STEM['infer_size_STEM'])
+                torchModel_STEM.Ne_output = Ne_estimated/denoised_STEM.mean()
+                if(FLAG_train_STEM):
+                    DATOS_sampler_STEM = DATOS(trainable_inds.shape[0], 
+                                             n_segments = hyps_STEM['n_segments'],
+                                             mbatch_size = hyps_STEM['mbatch_size'],
+                                             n_epochs = hyps_STEM['n_epochs'])
+                    model_path = train_STEM(hyps_STEM['n_kSweeps'], 
+                                          torch_handler_STEM, 
+                                          data_gen_STEM,
+                                          logger, 
+                                          DATOS_sampler_STEM,
+                                          trainable_inds,
+                                          hyps_STEM['infer_size_STEM'],
+                                          hyps_STEM['mask_rate'])
+                    logger(f'Training STEM image denoising is finished.')
+                    logger(f'Model is at: {model_path.absolute()}')
+        
+                _, denoised_STEM = infer_STEM(torch_handler_STEM, 
+                                          data_gen_STEM, logger, 
+                                          hyps_STEM['infer_size_STEM'])
+                logger.log_single('STEM_denoiser/denoised_STEM.npy', denoised_STEM)
+                logger.log_imshow('STEM_denoiser/denoised_STEM.jpg', denoised_STEM)
+                denoised_STEM_mean = denoised_STEM.mean()
+                if ( (denoised_STEM_mean < Ne_estimated / 2) |
+                     (denoised_STEM_mean > Ne_estimated * 2) ):
+                    logger('The STEM denoiser was unsuccessful'
+                           f'The estimated Ne was {Ne_estimated}, but the STEM denoiser '
+                           f'came up with {denoised_STEM_mean}')
+                    raise ValueError
+            elif STEM_denoiser_model_type == 'TSVD':
+                denoised_STEM = mcemtools.tensor_svd.tensor_svd_denoise(
+                    data4D_noisy, rank = (
+                        rank_info.n_x, rank_info.n_y, rank_info.n_pix))
+                denoised_STEM = denoised_STEM.reshape(*data4D_noisy_shape)
+                denoised_STEM, _ = mcemtools.sum_4D(denoised_STEM)
+            else:
+                denoised_STEM, _ = mcemtools.sum_4D(data4D_noisy)
         else:
             logger('denoised_STEM is provided already!')
         data4D_noisy_new = data4D_noisy.copy()
@@ -491,9 +514,33 @@ def denoise4net(
     else:
         loss_weight = None
 
-    data_gen_I4D = mcemtools.data_maker_4D(
-        data4D_noisy_new, data4D_nonoise, len_side = hyps_I4D['n_prob'],
-        trainable_area_I4D = trainable_area_I4D)
+    if(True):
+        logger('Making a training dataset using noisy')
+        data_gen_I4D = mcemtools.data_maker_4D(
+            data4D_noisy_new, data4D_nonoise, len_side = hyps_I4D['n_prob'],
+            trainable_area_I4D = trainable_area_I4D)
+    elif(False):
+        logger('Making a diffused input dataset')
+        data_gen_I4D_diffused = mcemtools.data_maker_4D(
+            data4D_noisy_diffused, data4D_nonoise, len_side = hyps_I4D['n_prob'],
+            trainable_area_I4D = trainable_area_I4D)
+        logger('Generating original noisy dataset')
+        data_gen_I4D_X_in = data_gen_I4D_diffused.X_in.copy()
+        pvalue = data_gen_I4D_diffused.reconstruct4D(data_gen_I4D_diffused.Y_label)
+        pvalue = pvalue[hyps_I4D['n_prob']//2:5+hyps_I4D['n_prob']//2,
+                        hyps_I4D['n_prob']//2:5+hyps_I4D['n_prob']//2
+                        ].reshape(25, n_r, n_c)
+        logger.log_imshow_by_subplots(
+            'I4D_denoiser/sample_100/data4D_noisy_diffused', pvalue)
+        
+        del data_gen_I4D_diffused
+        logger('Making a training dataset using noisy')
+        data_gen_I4D = mcemtools.data_maker_4D(
+            data4D_noisy_new, data4D_nonoise, len_side = hyps_I4D['n_prob'],
+            trainable_area_I4D = trainable_area_I4D)
+        data_gen_I4D.X_in = data_gen_I4D_X_in.copy()
+        del data_gen_I4D_X_in
+        logger('training dataset is modified with diffused input')
     
     pvalue = data_gen_I4D.reconstruct4D(data_gen_I4D.GNDTruth)
     pvalue = pvalue[hyps_I4D['n_prob']//2:5+hyps_I4D['n_prob']//2, 
@@ -596,109 +643,133 @@ def denoise4net(
         lossFunc = criterion_I4D,
         device = device,
         logger = logger,
-        learning_rate = 1e-5,
+        learning_rate = 1e-7,
         momentum = hyps_I4D['momentum'],
         pass_indices_to_model = True,
         fix_during_infer = True) 
     
     perv_loss = np.nan
     Elapsed_time = 0
-    for kcnt in range(hyps_I4D['n_ksweeps']):
-        ETA_base = Elapsed_time * (hyps_I4D['n_ksweeps'] - kcnt)
-        # init_I4D(None, noisy_PACBED_in,
-        #         logger, data_gen_I4D, torch_handler_I4D, hyps_I4D['infer_size_I4D'])
-
-        if kcnt == 0:
-            n_epochs = 1
-        else:
-            torch_handler_I4D.update_learning_rate(hyps_I4D['learning_rate'])
-            n_epochs = hyps_I4D['n_epochs']
-
-        if kcnt < hyps_I4D['n_ksweeps'] / 2:
-            init_I4D(noisy_STEM_in, None,
-                     logger, data_gen_I4D, torch_handler_I4D, 
-                     hyps_I4D['infer_size_I4D'])
-
-        if(not FLAG_train_I4D):
-            kcnt = hyps_I4D['n_ksweeps']
+    for refine_step in range(1, 20):
+        for kcnt in range(hyps_I4D['n_ksweeps']):
+            ETA_base = Elapsed_time * (hyps_I4D['n_ksweeps'] - kcnt)
+            # init_I4D(None, noisy_PACBED_in,
+            #         logger, data_gen_I4D, torch_handler_I4D, hyps_I4D['infer_size_I4D'])
+            if refine_step == 1:
+                if kcnt == 0:
+                    n_epochs = 1
+                else:
+                    torch_handler_I4D.update_learning_rate(hyps_I4D['learning_rate'])
+                    n_epochs = hyps_I4D['n_epochs']
         
-        criterion_I4D.LAGMUL = criterion_I4D_LAGMUL(kcnt, hyps_I4D['n_ksweeps'])
-        logger(f'criterion_I4D.LAGMUL: {criterion_I4D.LAGMUL}')
-        if(FLAG_train_I4D):
-            DATOS_sampler_I4D = DATOS(
-                trainable_inds.shape[0], 
-                classes = classes,
-                n_segments = hyps_I4D['n_segments'],
-                mbatch_size = hyps_I4D['mbatch_size'],
-                n_epochs = n_epochs)
-            Elapsed_time = logger.time_stamp
-            model_I4D_fpath, perv_loss = train_I4D(kcnt,
-                                                   logger,
-                                                   data_gen_I4D,
-                                                   DATOS_sampler_I4D,
-                                                   torch_handler_I4D,
-                                                   trainable_inds,
-                                                   perv_loss,
-                                                   hyps_I4D['infer_size_I4D'],
-                                                   ETA_base)
-            Elapsed_time = logger.time_stamp - Elapsed_time
-            logger(f'Model I4D so far: {model_I4D_fpath}')
+                if kcnt < 2:#hyps_I4D['n_ksweeps'] / 2:
+                    init_I4D(noisy_STEM_in, None,
+                             logger, data_gen_I4D, torch_handler_I4D, 
+                             hyps_I4D['infer_size_I4D'])
         
-        ferrs, data4D_denoised = infer_I4D(torch_handler_I4D,
-                                           data_gen_I4D, logger,
-                                           hyps_I4D['infer_size_I4D'])
-        logger.log_imshow('I4D_denoiser/ferrs/ferrs', ferrs.reshape(
-            n_x - 2 * (hyps_I4D['n_prob']//2),
-            n_y - 2 * (hyps_I4D['n_prob']//2) ))
-        data4D_denoised = data_gen_I4D.reconstruct4D(data4D_denoised)
+                if(not FLAG_train_I4D):
+                    kcnt = hyps_I4D['n_ksweeps']
+                
+                criterion_I4D.LAGMUL = criterion_I4D_LAGMUL(kcnt, hyps_I4D['n_ksweeps'])
+            logger(f'criterion_I4D.LAGMUL: {criterion_I4D.LAGMUL}')
+            if(FLAG_train_I4D):
+                DATOS_sampler_I4D = DATOS(
+                    trainable_inds.shape[0], 
+                    classes = classes,
+                    n_segments = hyps_I4D['n_segments'],
+                    mbatch_size = hyps_I4D['mbatch_size'],
+                    n_epochs = n_epochs)
+                Elapsed_time = logger.time_stamp
+                model_I4D_fpath, perv_loss = train_I4D(kcnt,
+                                                       logger,
+                                                       data_gen_I4D,
+                                                       DATOS_sampler_I4D,
+                                                       torch_handler_I4D,
+                                                       trainable_inds,
+                                                       perv_loss,
+                                                       hyps_I4D['infer_size_I4D'],
+                                                       ETA_base)
+                Elapsed_time = logger.time_stamp - Elapsed_time
+                logger(f'Model I4D so far: {model_I4D_fpath}')
             
-        logger(f'data4D_denoised shape: {data4D_denoised.shape}')
-        pvalue = data4D_denoised[
-            hyps_I4D['n_prob']//2:hyps_I4D['n_prob']//2 + 5, 
-            hyps_I4D['n_prob']//2:hyps_I4D['n_prob']//2 + 5
-                ].reshape(25, n_r, n_c)
-        logger.log_imshow_by_subplots(
-            'I4D_denoiser/samples/data4D_denoised', 
-            pvalue)
+            ferrs, data4D_denoised = infer_I4D(torch_handler_I4D,
+                                               data_gen_I4D, logger,
+                                               hyps_I4D['infer_size_I4D'])
+            logger.log_imshow('I4D_denoiser/ferrs/ferrs', ferrs.reshape(
+                n_x - 2 * (hyps_I4D['n_prob']//2),
+                n_y - 2 * (hyps_I4D['n_prob']//2) ))
+            data4D_denoised = data_gen_I4D.reconstruct4D(data4D_denoised)
+                
+            logger(f'data4D_denoised shape: {data4D_denoised.shape}')
+            pvalue = data4D_denoised[
+                hyps_I4D['n_prob']//2:hyps_I4D['n_prob']//2 + 5, 
+                hyps_I4D['n_prob']//2:hyps_I4D['n_prob']//2 + 5
+                    ].reshape(25, n_r, n_c)
+            logger.log_imshow_by_subplots(
+                'I4D_denoiser/samples/data4D_denoised', 
+                pvalue)
+            
+            ####################################################################
+            data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
+                             hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
+                = data4D_denoised.copy().astype('float32')
+            # if(log_denoised_every_sweep):
+            #     logger.log_single('I4D_denoiser/I4D_denoised_inter/denoised', 
+            #                       data4D_noisy_new)
+            
+            # ratio = 1 / hyps_I4D['n_ksweeps']
+            # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
+            #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
+            #     *=(1 - ratio)
+            # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
+            #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
+            #     += ratio * np.random.poisson(data4D_denoised).astype('float32')
+            ####################################################################
+            
+            noisy_STEM, noisy_PACBED  = mcemtools.sum_4D(data4D_noisy_new)
+            Ne_estimated = noisy_STEM.mean()
+            logger(f'estimated Ne per probe position: {Ne_estimated}')
+            logger.log_imshow(
+                'I4D_denoiser/I4D_denoised_STEM/final_STEM_noisy', 
+                noisy_STEM[hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2,
+                        hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2])
+            logger.log_imshow(
+                'I4D_denoiser/I4D_denoised_PACBED/final_noisy_PACBED',  noisy_PACBED)
+            
+            mch = mcemtools.data4D_to_frame(data4D_noisy_new[
+                hyps_I4D['n_prob']//2:n_canvas_patterns - hyps_I4D['n_prob']//2,
+                hyps_I4D['n_prob']//2:n_canvas_patterns - hyps_I4D['n_prob']//2])
+            im = plt.imshow(mch); plt_colorbar(im)
+            print(logger.log_plt('I4D_denoiser/canvas_denoised/denoised', 
+                                 dpi = 4000))
+            
+            if not FLAG_train_I4D:
+                break
         
-        ####################################################################
-        data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
-                         hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
-            = data4D_denoised.copy().astype('float32')
+        logger('Making a diffused input dataset')
+        data4D_noisy_diffused = data4D_noisy.copy() * (
+                1 - refine_step/20) + data4D_noisy_new * refine_step/20
+        data_gen_I4D_diffused = mcemtools.data_maker_4D(
+            data4D_noisy_diffused, data4D_nonoise, len_side = hyps_I4D['n_prob'],
+            trainable_area_I4D = trainable_area_I4D)
+        logger('Generating original noisy dataset')
+        data_gen_I4D_X_in = data_gen_I4D_diffused.X_in.copy()
+        data_gen_I4D_Y_label = data_gen_I4D_diffused.Y_label.copy()
+        pvalue = data_gen_I4D_diffused.reconstruct4D(data_gen_I4D_diffused.Y_label)
+        pvalue = pvalue[hyps_I4D['n_prob']//2:5+hyps_I4D['n_prob']//2,
+                        hyps_I4D['n_prob']//2:5+hyps_I4D['n_prob']//2
+                        ].reshape(25, n_r, n_c)
+        logger.log_imshow_by_subplots(
+            'I4D_denoiser/sample_100/data4D_noisy_diffused', pvalue)
+        del data_gen_I4D_diffused
+        logger('Making a training dataset using noisy')
+        data_gen_I4D.X_in = data_gen_I4D_X_in.copy()
+        data_gen_I4D.Y_label = data_gen_I4D_Y_label.copy()
+        del data_gen_I4D_X_in, data_gen_I4D_Y_label
+        logger('training dataset is modified with diffused input')
         if(log_denoised_every_sweep):
             logger.log_single('I4D_denoiser/I4D_denoised_inter/denoised', 
-                              data4D_noisy_new)
-        
-        # ratio = 1 / hyps_I4D['n_ksweeps']
-        # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
-        #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
-        #     *=(1 - ratio)
-        # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
-        #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
-        #     += ratio * np.random.poisson(data4D_denoised).astype('float32')
-        ####################################################################
-        
-        noisy_STEM, noisy_PACBED  = mcemtools.sum_4D(data4D_noisy_new)
-        Ne_estimated = noisy_STEM.mean()
-        logger(f'estimated Ne per probe position: {Ne_estimated}')
-        logger.log_imshow(
-            'I4D_denoiser/I4D_denoised_STEM/final_STEM_noisy', 
-            noisy_STEM[hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2,
-                    hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2])
-        logger.log_imshow(
-            'I4D_denoiser/I4D_denoised_PACBED/final_noisy_PACBED', 
-            noisy_PACBED[hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2,
-                    hyps_I4D['n_prob']//2:-hyps_I4D['n_prob']//2])
-        
-        mch = mcemtools.data4D_to_frame(data4D_noisy_new[
-            hyps_I4D['n_prob']//2:n_canvas_patterns - hyps_I4D['n_prob']//2,
-            hyps_I4D['n_prob']//2:n_canvas_patterns - hyps_I4D['n_prob']//2])
-        im = plt.imshow(mch); plt_colorbar(im)
-        print(logger.log_plt('I4D_denoiser/canvas_denoised/denoised', 
-                             dpi = 4000))
-        
-        if not FLAG_train_I4D:
-            break
+                data4D_noisy_new)
         
     logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
     
