@@ -13,15 +13,7 @@ mcemtools
         :target: https://mcemtools.readthedocs.io/en/latest/?version=latest
         :alt: Documentation Status
 
-
-.. image:: https://pyup.io/repos/github/arsadri/mcemtools/shield.svg
-     :target: https://pyup.io/repos/github/arsadri/mcemtools/
-     :alt: Updates
-
-
-
-State of the art aalysis for electron microscopy
-
+Deep unsupervised analysis tools for Four-dimensional Scanning Transmission Electron Microscopy (4D-STEM) 
 
 * Free software: MIT license
 * Documentation: https://mcemtools.readthedocs.io.

@@ -220,7 +220,7 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
             log_factorial_x_in = self.log_factorial[x_in.long()]
         
         err_p = x_in * torch.log(y_out + self.output_stabilizer
-                                 ) - y_out + log_factorial_x_in
+                                 ) - y_out - log_factorial_x_in
         err_p[:, :, self.mask_backprop == 0] = 0
         res_p = - err_p.sum() / self.mask_backprop_sum / n_images
         

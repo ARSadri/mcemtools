@@ -650,11 +650,19 @@ def denoise4net(
     
     perv_loss = np.nan
     Elapsed_time = 0
-    for refine_step in range(1, 20):
-        for kcnt in range(hyps_I4D['n_ksweeps']):
-            ETA_base = Elapsed_time * (hyps_I4D['n_ksweeps'] - kcnt)
-            # init_I4D(None, noisy_PACBED_in,
-            #         logger, data_gen_I4D, torch_handler_I4D, hyps_I4D['infer_size_I4D'])
+
+    n_refine_steps = hyps_I4D['n_refine_steps']
+
+    refine_step_list = np.arange(1, n_refine_steps)
+    for refine_step in refine_step_list:
+
+        n_ksweeps = hyps_I4D['n_ksweeps']
+        if refine_step == n_refine_steps - 1:
+            n_ksweeps = hyps_I4D['n_ksweeps_last']
+
+        for kcnt in range(n_ksweeps):
+            ETA_base = Elapsed_time * (n_ksweeps - kcnt)
+
             if refine_step == 1:
                 if kcnt == 0:
                     n_epochs = 1
@@ -662,15 +670,15 @@ def denoise4net(
                     torch_handler_I4D.update_learning_rate(hyps_I4D['learning_rate'])
                     n_epochs = hyps_I4D['n_epochs']
         
-                if kcnt < 2:#hyps_I4D['n_ksweeps'] / 2:
+                if kcnt < 2:
                     init_I4D(noisy_STEM_in, None,
                              logger, data_gen_I4D, torch_handler_I4D, 
                              hyps_I4D['infer_size_I4D'])
-        
+
                 if(not FLAG_train_I4D):
-                    kcnt = hyps_I4D['n_ksweeps']
+                    kcnt = n_ksweeps
                 
-                criterion_I4D.LAGMUL = criterion_I4D_LAGMUL(kcnt, hyps_I4D['n_ksweeps'])
+                criterion_I4D.LAGMUL = criterion_I4D_LAGMUL(kcnt, n_ksweeps)
             logger(f'criterion_I4D.LAGMUL: {criterion_I4D.LAGMUL}')
             if(FLAG_train_I4D):
                 DATOS_sampler_I4D = DATOS(
@@ -709,22 +717,9 @@ def denoise4net(
                 'I4D_denoiser/samples/data4D_denoised', 
                 pvalue)
             
-            ####################################################################
             data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
                              hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
                 = data4D_denoised.copy().astype('float32')
-            # if(log_denoised_every_sweep):
-            #     logger.log_single('I4D_denoiser/I4D_denoised_inter/denoised', 
-            #                       data4D_noisy_new)
-            
-            # ratio = 1 / hyps_I4D['n_ksweeps']
-            # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
-            #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
-            #     *=(1 - ratio)
-            # data4D_noisy_new[hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2),
-            #                  hyps_I4D['n_prob']//2 : -(hyps_I4D['n_prob']//2)] \
-            #     += ratio * np.random.poisson(data4D_denoised).astype('float32')
-            ####################################################################
             
             noisy_STEM, noisy_PACBED  = mcemtools.sum_4D(data4D_noisy_new)
             Ne_estimated = noisy_STEM.mean()
@@ -747,8 +742,9 @@ def denoise4net(
                 break
         
         logger('Making a diffused input dataset')
-        data4D_noisy_diffused = data4D_noisy.copy() * (
-                1 - refine_step/20) + data4D_noisy_new * refine_step/20
+        beta = refine_step/(len(refine_step_list) + 1)
+        logger(f'The combination weight is: {beta}')
+        data4D_noisy_diffused = data4D_noisy.copy() * (1 - beta) + data4D_noisy_new * beta
         data_gen_I4D_diffused = mcemtools.data_maker_4D(
             data4D_noisy_diffused, data4D_nonoise, len_side = hyps_I4D['n_prob'],
             trainable_area_I4D = trainable_area_I4D)
@@ -771,7 +767,7 @@ def denoise4net(
             logger.log_single('I4D_denoiser/I4D_denoised_inter/denoised', 
                 data4D_noisy_new)
         
-    logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
+        logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
     
     frame_denoised = mcemtools.data4D_to_frame(data4D_noisy_new)
     frame_nonoise = mcemtools.data4D_to_frame(data4D_nonoise)
@@ -780,9 +776,10 @@ def denoise4net(
     logger.log_single('I4D_denoiser/canvases/nonoise', frame_nonoise)
     logger.log_single('I4D_denoiser/canvases/noisy', frame_noisy)
     
-    logger('--\|/'*16)
     logger_dir = logger.log_dir
-    
+    logger(f'Check in: {logger_dir}')
+    logger('--\|/'*16)
+        
     del logger
     
     return logger_dir
