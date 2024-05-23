@@ -2,6 +2,7 @@ import numpy as np
 from .masking import annular_mask, mask2D_to_4D, image_by_windows
 from lognflow import printprogress, lognflow
 from skimage.transform import warp_polar
+from itertools import product
 
 def normalize_4D(data4D, weights4D = None, method = 'loop'):
     """
@@ -55,7 +56,7 @@ def calc_symm(CBED, inputs_to_share: tuple):
     mask_ang, nang, mflag = inputs_to_share
     
     polar = warp_polar(CBED)
-    kvec = np.tile(np.array([np.arange(_polar.shape[0])]).swapaxes(0, 1),
+    kvec = np.tile(np.array([np.arange(polar.shape[0])]).swapaxes(0, 1),
                 (1, nang))/(nang/2/np.pi)
     polar[mask_ang == 0] = 0
     
@@ -170,7 +171,7 @@ def sum_4D(data4D, weight4D = None):
     
     I4D_cpy = data4D.copy()
     if weight4D is not None:
-        I4D_cpy *= weight4D
+        I4D_cpy = I4D_cpy * weight4D
     PACBED = I4D_cpy.sum(1).sum(0).squeeze()
     totI = I4D_cpy.sum(3).sum(2).squeeze()
     return totI, PACBED
@@ -228,33 +229,24 @@ def bin_image(data, factor = 2, logger = print):
     data_shape = data.shape
     n_x, n_y = data_shape[0], data_shape[1]
     if len(data_shape) > 2:
-        data_binned = np.zeros((int(n_x/factor), int(n_y/factor), *data_shape[2:]),
+        data_summed = np.zeros((n_x - factor + 1, n_y - factor + 1, *data_shape[2:]),
                                dtype = data.dtype)
     else:
-        data_binned = np.zeros((int(n_x/factor), int(n_y/factor)), 
+        data_summed = np.zeros((n_x - factor + 1, n_y - factor + 1), 
                                dtype = data.dtype)
-    inds_i, inds_j = np.where(np.ones((n_x, n_y)) > 0)
     logger(f'bin_image start for dataset of shape {data_shape}...')
-    logger('top left')
-    data_binned[
-        (inds_i[::factor]/factor).astype('int'), 
-        (inds_j[::factor]/factor).astype('int')] += \
-            data[inds_i[::factor], inds_j[::factor]]
-    logger('top right')
-    data_binned[
-        (inds_i[1::factor]/factor).astype('int'), 
-        (inds_j[::factor]/factor).astype('int')] += \
-            data[inds_i[1::factor], inds_j[::factor]]
-    logger('bot left')
-    data_binned[
-        (inds_i[::factor]/factor).astype('int'), 
-        (inds_j[1::factor]/factor).astype('int')] += \
-            data[inds_i[::factor], inds_j[1::factor]]
-    logger('bot right')
-    data_binned[
-        (inds_i[1::factor]/factor).astype('int'), 
-        (inds_j[1::factor]/factor).astype('int')] += \
-            data[inds_i[1::factor], inds_j[1::factor]]
+    
+    fh = int(factor/2)
+    
+    for indi, indj in product(list(range(factor)), list(range(factor))):
+        rend = -fh + indi
+        cend = -fh + indj
+        if rend == 0: rend = n_x
+        if cend == 0: cend = n_y
+        data_summed += data[fh - 1 + indi:rend, fh - 1 + indj:cend].copy()
+
+    data_binned = data_summed[::factor, ::factor]
+        
     logger(f'... bin_image done with shape {data_binned.shape}')
     return data_binned
 

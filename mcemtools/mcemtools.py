@@ -28,8 +28,8 @@ class viewer_4D:
         
         self.data4D_shape = self.data4D.shape
         self.data4D_shape_list = np.array(self.data4D_shape)
-        self.viewers_list = [napari.Viewer(title = title + '_STEM'), 
-                             napari.Viewer(title = title + '_PACBED')]
+        self.viewers_list = [napari.Viewer(title = title + '_PACBED'), 
+                             napari.Viewer(title = title + '_STEM')]
         STEM_img, PACBED = self.statistics_4D(self.data4D)
         self.viewers_list[0].add_image(PACBED)
         self.viewers_list[1].add_image(STEM_img)
@@ -41,8 +41,9 @@ class viewer_4D:
             viewer.bind_key(key = 'Right', func = self.move_right)
             viewer.bind_key(key = 'i'    , func = self.print_shape_info)
             viewer.bind_key(key = 'm'    , func = self.show_mask)
-            viewer.bind_key(key = 'f'    , func = self.show_frame4D)
             viewer.bind_key(key = 'F5'   , func = self.update_by_masked_sum_4D)
+
+        self.viewers_list[1].bind_key(key = 'g', func = self.show_frame4D)
         
         self.viewers_list[0].mouse_drag_callbacks.append(self.mouse_drag_event)
         self.viewers_list[1].mouse_drag_callbacks.append(self.mouse_drag_event)
@@ -52,6 +53,11 @@ class viewer_4D:
             (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
         self.mask2D_list.append(np.ones(
             (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
+        self.mask2D_neg_list = []
+        self.mask2D_neg_list.append(np.zeros(
+            (self.data4D_shape[2], self.data4D_shape[3]), dtype='int8'))
+        self.mask2D_neg_list.append(np.zeros(
+            (self.data4D_shape[0], self.data4D_shape[1]), dtype='int8'))
         self.move_perv_time_time = 0
         napari.run()
     
@@ -59,13 +65,14 @@ class viewer_4D:
         self.update_by_masked_sum_4D(viewer)
         viewer_index = self.viewers_list.index(viewer)
         self.logger(f'showing mask for viewer {viewer_index}')
+        mask2D = self.mask2D_list[viewer_index] - self.mask2D_neg_list[viewer_index]
         try:
             self.logger.log_single(
-                'mask', self.mask2D_list[viewer_index],time_tag = False)
+                'mask', mask2D,time_tag = False)
         except:
             pass
         plt.figure()
-        plt.imshow(self.mask2D_list[viewer_index])
+        plt.imshow(mask2D)
         plt.title(f'mask for viewer {viewer_index}')
         plt.show()
     
@@ -130,26 +137,56 @@ class viewer_4D:
         mask2D = np.ones(data4D_shape_select, dtype='int8')
         if(len(viewer.layers) > 1):
             mask2D = self.get_mask2D(viewer.layers[1], data4D_shape_select)
+        mask2D_neg = np.zeros(data4D_shape_select, dtype='int8')
+        if(len(viewer.layers) > 2):
+            mask2D_neg = self.get_mask2D(viewer.layers[2], data4D_shape_select)
         
-        if( (self.mask2D_list[viewer_index] != mask2D).sum()>0):
+        if( ((self.mask2D_list[viewer_index] != mask2D).sum()>0) |
+            ( (self.mask2D_neg_list[viewer_index] != mask2D_neg).sum()>0) ):
             self.mask2D_list.__setitem__(viewer_index, mask2D.copy())
-            mask4D = np.zeros(self.data4D_shape, dtype='int8')
+            self.mask2D_neg_list.__setitem__(viewer_index, mask2D_neg.copy())
             if(viewer_index == 0):
-                if (self.mask2D_list[viewer_index]==1).sum() == 1:
-                    ind_r, ind_c = np.where(self.mask2D_list[viewer_index]==1)
+                if (mask2D==1).sum() == 1:
+                    ind_r, ind_c = np.where(mask2D==1)
                     STEM_img = self.data4D[..., ind_r, ind_c].squeeze().copy()
                 else:
-                    mask4D[:, :, self.mask2D_list[viewer_index]==1] = 1
+                    mask4D = np.zeros(self.data4D_shape, dtype='int8')
+                    mask4D[:, :, mask2D==1] = 1
                     STEM_img, _ = self.statistics_4D(self.data4D, mask4D)
+                if(mask2D_neg.sum() > 0):
+                    if (mask2D_neg==1).sum() == 1:
+                        ind_r, ind_c = np.where(mask2D_neg==1)
+                        STEM_img -= self.data4D[..., ind_r, ind_c].squeeze().copy()
+                    else:
+                        mask4D = np.zeros(self.data4D_shape, dtype='int8')
+                        mask4D[:, :, mask2D_neg==1] = 1
+                        _STEM_img, _ = self.statistics_4D(self.data4D, mask4D)
+                        STEM_img -= _STEM_img/mask2D_neg.sum()*(
+                            mask2D==1).sum()
+                
                 self.viewers_list[1].layers[0].data = STEM_img
                 self.logger('STEM image updated')
             if(viewer_index == 1):
-                if (self.mask2D_list[viewer_index]==1).sum() == 1:
-                    ind_x, ind_y = np.where(self.mask2D_list[viewer_index]==1)
+                if (mask2D==1).sum() == 1:
+                    ind_x, ind_y = np.where(mask2D==1)
                     PACBED = self.data4D[ind_x, ind_y].copy()
                 else:
-                    mask4D[self.mask2D_list[viewer_index]==1, :, :] = 1
+                    mask4D = np.zeros(self.data4D_shape, dtype='int8')
+                    mask4D[mask2D==1, :, :] = 1
                     _, PACBED = self.statistics_4D(self.data4D, mask4D)
+                    
+                if(mask2D_neg.sum() > 0):
+                    print('-+'*40)
+                    if (mask2D_neg==1).sum() == 1:
+                        ind_r, ind_c = np.where(mask2D_neg==1)
+                        PACBED -= self.data4D[ind_r, ind_c].squeeze().copy()
+                    else:
+                        mask4D = np.zeros(self.data4D_shape, dtype='int8')
+                        mask4D[mask2D_neg==1] = 1
+                        _, _PACBED = self.statistics_4D(self.data4D, mask4D)
+                        PACBED -= _PACBED/mask2D_neg.sum()*(
+                            mask2D==1).mean()
+                        
                 self.viewers_list[0].layers[0].data = PACBED
                 self.logger('PACBED image updated')
             
@@ -168,6 +205,7 @@ class viewer_4D:
         self.logger(f'edge_width:{viewer.layers[1].edge_width}')
     
     def show_frame4D(self, viewer):
+        print('f pressed', flush = True)
         viewer_index = self.viewers_list.index(viewer)
         self.logger(f'showing frame for viewer {viewer_index}')
         data4D_shape_select = viewer.layers[0].data.shape
@@ -204,21 +242,28 @@ class viewer_4D:
         viewer_index = self.viewers_list.index(viewer)
         if(len(viewer.layers) <= 1):
             return
+        layer = viewer.layers[1]
+        try:
+            layer_1 = int(str(viewer.layers.selection).split('[')[1].split(']')[0])
+            if layer_1 == 1:
+                layer = viewer.layers[2]
+        except:
+            pass
         time_since_last_move = time.time() - self.move_perv_time_time
-        n_shapes = len(viewer.layers[1].data)
-        selected_shape_cnt_list = list(viewer.layers[1].selected_data)
+        n_shapes = len(layer.data)
+        selected_shape_cnt_list = list(layer.selected_data)
         if selected_shape_cnt_list:
             cdata = []
             for shape_cnt in range(n_shapes):
-                _cdata = viewer.layers[1].data[int(shape_cnt)]
+                _cdata = layer.data[int(shape_cnt)]
                 if shape_cnt in selected_shape_cnt_list:
                     _cdata[:, axis] += sign
                 cdata.append(_cdata)
-            viewer.layers[1].data = cdata
+            layer.data = cdata
             selected_data = set()
             for shape_cnt in selected_shape_cnt_list:
                 selected_data.add(shape_cnt)
-            viewer.layers[1].selected_data = selected_data
+            layer.selected_data = selected_data
         sleep_between_moves = self.sleep_between_moves
         if (self.mask2D_list[viewer_index]==1).sum() == 1:
             sleep_between_moves = 0

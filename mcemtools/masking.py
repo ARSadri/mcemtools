@@ -44,7 +44,7 @@ def annular_mask(image_shape : tuple,
         centre = (n_r/2, n_c/2)
     if radius is None: 
         # use the smallest distance between the centre and image walls
-        radius = np.minimum(centre[0], centre[1])
+        radius = np.inf
 
     Y, X = np.ogrid[:n_r, :n_c]
     
@@ -61,6 +61,44 @@ def annular_mask(image_shape : tuple,
         mask *= in_radius <= dist_from_centre
 
     return mask.astype('uint8') 
+
+def crop_or_pad(data, new_shape, padding_value = 0):
+    """shape data to have the new shape new_shape
+    Parameters
+    ----------
+        :param data
+        :param new_shape
+        :param padding_value
+            the padded areas fill value
+    Returns
+    -------
+        : np.ndarray of type data.dtype of shape new_shape
+            If a dimension of new_shape is smaller than a, a will be cut, 
+            if bigger, a will be put in the middle of padded zeros.
+    """
+    data_shape = data.shape
+    
+    assert len(data_shape) == len(new_shape), \
+        'put np.ndarray a in b, the length of their shapes should be the same.'
+    
+    for dim in range(len(data_shape)):
+        if data_shape[dim] != new_shape[dim]:
+            data = data.swapaxes(0, dim)
+            start = int((data_shape[dim] - new_shape[dim])/2)
+            finish = int((data_shape[dim] + new_shape[dim])/2)
+            pad_left = -int((data_shape[dim] - new_shape[dim])/2)
+            pad_right = int(np.ceil((new_shape[dim] - data_shape[dim])/2))
+            if data_shape[dim] > new_shape[dim]:
+                data = data[start : finish]
+            elif data_shape[dim] < new_shape[dim]:
+                data = np.vstack(
+                    (padding_value + np.zeros(((pad_left, ) + data.shape[1:]),
+                                      dtype=data.dtype),
+                     data,
+                     padding_value + np.zeros(((pad_right, ) + data.shape[1:]),
+                                      dtype=data.dtype)))
+            data = data.swapaxes(0, dim)
+    return data
 
 class image_by_windows:
     def __init__(self, 

@@ -3,7 +3,8 @@
 
 """
 import numpy as np
-
+import torch
+from lognflow import printprogress
 from typing import Literal
 
 def pyMSSE(res, MSSE_LAMBDA = 3, k = 12) -> tuple[np.ndarray, np.ndarray]:
@@ -79,7 +80,7 @@ class DATOS:
             assert fitting_errors.shape[0] == self.N,\
                 f'fitting_errors are {fitting_errors.shape[0]} but must be {self.N}'
         next_in_line = 0
-        adjacencies = None  # @UnusedVariable
+        adjacencies = None
         match order:
             case 'ascend':
                 sort_inds = np.argsort(fitting_errors)
@@ -192,6 +193,253 @@ class DATOS:
             inds = None
             return (inds, self.status)    
 
+DATOS_OUT_OF_MEMORY_MSG = \
+    'DATOS Inference: Can not allocate memory for predictions with shape:'\
+    ' {predictions_shape}.' \
+    ' Maybe call infer(indices, ...) with only a chunk of indices of all'\
+    ' data points. Or maybe the statfunctions would suffice? i.e. you probably'\
+    ' need the predictions to get some statistics out of it. If so, put'\
+    ' callable_that_gives_statistics(prediction, data_index) in'\
+    ' predictions_statfunc_list as a list of such functions in the input.'\
+    ' Currently, predictions will not be returned because it is too big.'
+
+class nn_from_torch:
+    def __init__(self,
+                 data_generator,
+                 torchModel,
+                 lossFunc,
+                 device,
+                 logger = print,
+                 pass_indices_to_model = False,
+                 learning_rate = 1e-6,
+                 momentum = 1e-7,
+                 fix_during_infer = False,
+                 optimizer = None,
+                 preds_as_tuple_index = None):
+        """ Using pytorch 
+            The optimizer must be SGD. So we only accept the 
+            learning_rate and momentum for SGD.
+            
+            data_generator is a callable function that given indices for data
+            points will produce data and labels
+            data, labels = self.data_generator(indices)
+            
+            
+        """
+        self.preds_as_tuple_index = preds_as_tuple_index
+        self.data_generator = data_generator
+        self.torchModel = torchModel
+        self.lossFunc = lossFunc
+        self.device = device
+        self.logger = logger
+        self.infer_size = None
+        try:
+            self.lossFunc = lossFunc.float()
+            self.lossFunc = self.lossFunc.to(device)
+        except:
+            pass
+        if optimizer is None:
+            self.optimizer = torch.optim.SGD(self.torchModel.parameters(),
+                                             lr = learning_rate,
+                                             momentum = momentum)
+        else:
+            self.optimizer = optimizer
+        self.pass_indices_to_model = pass_indices_to_model
+        
+        self.fix_during_infer = fix_during_infer
+
+    def update_learning_rate(self, lr):
+        for g in self.optimizer.param_groups:
+            g['lr'] = lr
+    
+    def update_momentum(self, momentum):
+        for g in self.optimizer.param_groups:
+            g['momentum'] = momentum
+        
+    def update(self, indices):
+        """use the netowrk by PytTorch
+            Call this function when infering data for sorting or for trianing
+            Input arguments:
+            ~~~~~~~~~~~~~~~~
+            indices: indices of data points to update the network with
+                default: False
+            Output argument:
+            ~~~~~~~~~~~~~~~~
+            tuple of three: losses, list_of_stats, predictions
+        """
+        data, labels = self.data_generator(indices)
+        if(not torch.is_tensor(data)):
+            data = torch.from_numpy(data).float().to(self.device)
+        self.optimizer.zero_grad()
+        if(self.pass_indices_to_model):
+            preds = self.torchModel(data, indices)
+        else:
+            preds = self.torchModel(data)
+        if(not torch.is_tensor(labels)):
+            labels = torch.from_numpy(labels).float().to(self.device)
+        if(self.pass_indices_to_model):
+            loss = self.lossFunc(preds, labels, indices)
+        else:
+            loss = self.lossFunc(preds, labels)
+        if torch.isinf(loss) | torch.isnan(loss):
+            self.optimizer.zero_grad()
+        else:
+            loss.backward()
+            self.optimizer.step()            
+        loss = loss.detach().to('cpu').numpy()
+        torch.cuda.empty_cache()
+        return loss
+    
+    def infer(self, indices,
+                   return_predictions = False,
+                   infer_size = 1,
+                   show_progress = False,
+                   predictions_statfunc_list = None):
+        with torch.no_grad():
+            self.torchModel.eval()
+            if infer_size is None:
+                if self.infer_size is None:
+                    pt_stop = 1
+                    while(True):
+                        try:
+                            data, labels = \
+                                self.data_generator(indices[:pt_stop])
+                            if(not torch.is_tensor(data)):
+                                data = torch.from_numpy(\
+                                    data).float().to(self.device)
+                            if(self.pass_indices_to_model):
+                                preds = self.torchModel(data, indices[:pt_stop])
+                            else:
+                                preds = self.torchModel(data)
+                            data = data.detach().to('cpu')
+                            del data
+                            if(not torch.is_tensor(labels)):
+                                labels = torch.from_numpy(\
+                                    labels).float().to(self.device)
+                            
+                            if self.fix_during_infer:
+                                attrs_to_restore = (
+                                    self.lossFunc.accumulated_PACBED + 1,
+                                    self.lossFunc.accumulated_n_images + 1,
+                                    self.lossFunc.accumulated_mSTEM + 1,
+                                    self.lossFunc.mSTEM_loss_factor + 1)
+                                
+                            loss = self.lossFunc(preds, labels, indices[:pt_stop])
+                        
+                            if self.fix_during_infer:    
+                                self.lossFunc.accumulated_PACBED, \
+                                    self.lossFunc.accumulated_n_images, \
+                                    self.lossFunc.accumulated_mSTEM, \
+                                    self.lossFunc.mSTEM_loss_factor = (attrs_to_restore[0] - 1,
+                                                              attrs_to_restore[1] - 1,
+                                                              attrs_to_restore[2] - 1,
+                                                              attrs_to_restore[3] - 1)                           
+                            else:
+                                loss = self.lossFunc(preds, labels, indices[:pt_stop])
+                                
+                            pt_stop += 1
+                            torch.cuda.empty_cache()
+                        except:
+                            self.infer_size = pt_stop - 2
+                            if(self.infer_size<=0):
+                                self.infer_size = 1
+                            self.logger(f'infer_size: {self.infer_size}')
+                            break
+                        torch.cuda.empty_cache()
+                infer_size = self.infer_size
+                
+            predictions = None
+            predictions_stat_list = []
+            n_pts = indices.shape[0]
+            losses = np.zeros(n_pts, dtype='float32')
+            pt_start = 0
+            if(show_progress):
+                pbar = printprogress(n_pts, title = f'Inferring {n_pts} points')
+            while(pt_start < n_pts):
+                pt_stop = pt_start + infer_size
+                if pt_stop > n_pts:
+                    pt_stop = n_pts
+                _indices = np.array(indices[pt_start:pt_stop]).copy()
+                data, labels = self.data_generator(_indices)
+                if(not torch.is_tensor(data)):
+                    data = torch.from_numpy(data).float().to(self.device)
+                if(self.pass_indices_to_model):
+                    preds = self.torchModel(data, _indices)
+                else:
+                    preds = self.torchModel(data)
+                data = data.detach().to('cpu')
+                del data
+                if(not torch.is_tensor(labels)):
+                    labels = torch.from_numpy(labels).float().to(self.device)
+                
+                if self.fix_during_infer:    
+                    attrs_to_restore = (
+                        self.lossFunc.accumulated_PACBED,
+                        self.lossFunc.accumulated_n_images,
+                        self.lossFunc.accumulated_mSTEM,
+                        self.lossFunc.mSTEM_loss_factor)
+                    
+                if(self.pass_indices_to_model):
+                    loss = self.lossFunc(preds, labels, _indices)
+                else:
+                    loss = self.lossFunc(preds, labels)
+    
+                if self.fix_during_infer:    
+                    self.lossFunc.accumulated_PACBED, \
+                        self.lossFunc.accumulated_n_images, \
+                        self.lossFunc.accumulated_mSTEM, \
+                        self.lossFunc.mSTEM_loss_factor = attrs_to_restore
+                    
+                # loss = self.lossFunc(preds, labels)
+                labels = labels.detach().to('cpu')
+                del labels
+                loss = loss.detach().to('cpu').numpy()
+                losses[pt_start:pt_stop] = loss.copy()
+                del loss
+                if self.preds_as_tuple_index is not None:
+                    preds = preds[self.preds_as_tuple_index]
+                if( (return_predictions == True) | 
+                    (predictions_statfunc_list is not None)):
+                    preds = preds.detach().to('cpu').numpy()
+                if(return_predictions):
+                    if(pt_start==0):
+                        predictions_shape = ((n_pts,) + tuple(preds.shape[1:]))
+                        try:
+                            predictions = np.zeros(predictions_shape,
+                                                   dtype=preds.dtype)
+                        except Exception as e:
+                            self.logger(DATOS_OUT_OF_MEMORY_MSG.format(
+                                    predictions_shape = predictions_shape))
+                            self.torchModel.train()
+                            raise e
+                if(return_predictions):
+                    predictions[pt_start:pt_stop] = preds.copy()
+                
+                if(predictions_statfunc_list is not None):
+                    for preds_cnt, _ind in enumerate(_indices):
+                        for func_cnt, predictions_statfunc in \
+                                enumerate(predictions_statfunc_list):
+                            predstat = predictions_statfunc(\
+                                preds[preds_cnt], _ind)
+                            
+                            if preds_cnt == 0:
+                                predictions_stat_list.append(
+                                    np.zeros(((n_pts,) + \
+                                              tuple(predstat.shape[1:])),
+                                              dtype = predstat.dtype)
+                                    )
+                            predictions_stat_list[func_cnt][
+                                pt_start + preds_cnt] = predstat
+                        
+                del preds
+                torch.cuda.empty_cache()
+                if(show_progress):
+                    pbar(pt_stop - pt_start)
+                pt_start = pt_stop
+        torch.cuda.empty_cache()
+        self.torchModel.train()
+        return(losses, predictions_stat_list, predictions)
+
 if __name__ == '__main__':
     N = 100
     n_sweeps = 10
@@ -201,12 +449,15 @@ if __name__ == '__main__':
     # classes = np.concatenate((np.array([0]*int(0.25*N)), 
     #                           np.array([1]*int(0.40*N)), 
     #                           np.array([2]*int(0.35*N)))).ravel()
+    
     classes = np.ones(N, dtype='int')
-    DATOS_sampler = DATOS(N,
-                          classes = classes,
-                          mbatch_size = mbatch_size,
-                          n_segments = n_segments,
-                          n_epochs = n_epochs)
+    DATOS_sampler = DATOS(
+        N,
+        classes = classes,
+        mbatch_size = mbatch_size,
+        n_segments = n_segments,
+        n_epochs = n_epochs)
+    
     for _ in range(n_sweeps):
         DATOS_sampler.sort(np.random.rand(N))
         while(True):

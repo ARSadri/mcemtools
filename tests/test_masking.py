@@ -37,7 +37,23 @@ def test_mask2D_to_4D():
 def test_remove_islands_by_size():
     ...
 
+def test_new_shape():
+    
+    in_list = [[4, 4], [4, 4], [5, 5], [9, 5]]
+    new_shape_list = [[6, 2], [7, 3], [3, 7], [4, 8]]
+    
+    for in_shape, new_shape in zip(in_list, new_shape_list):
+        tens = (np.random.rand(*in_shape) * 100).astype('int')
+        tens_new_shape = mcemtools.masking.crop_or_pad(
+            tens, new_shape, logger = print)
+        print(tens, '\n' + '-'*5 + '\n', tens_new_shape, '\n' + '='*20)
+
+
+    mcemtools.masking.crop_or_pad(
+            np.zeros((3,4,5,6)), (3,4,3,3), logger = print)
+
 if __name__ == '__main__':
+    test_new_shape()
     test_markimage()
     test_annular_mask()
     test_image_by_windows()

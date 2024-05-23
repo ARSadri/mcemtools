@@ -108,3 +108,7 @@ History
 0.9.2 (2024-03-23)
 -------------------
 * annular mask can handle even sized image
+
+0.9.2 (2024-05-02)
+-------------------
+* viewer_4D takes second mask to subtract

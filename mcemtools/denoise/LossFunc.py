@@ -329,6 +329,7 @@ class mseLoss(nn.Module):
     def forward(self, inputs, targets, inds = None):
         return (((targets - inputs)**2).mean())**0.5
 
+
 class justLoss(nn.Module):
     def __init__(self):
         super(justLoss, self).__init__()

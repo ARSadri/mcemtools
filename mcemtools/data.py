@@ -197,7 +197,7 @@ class data_maker_4D:
         
         self.trainable_inds = np.arange(self.n_pts, dtype='int')
     
-    def update(self, inimg):
+    def update(self, inimg, update_label = True):
         for gpt_cnt in range(self.n_pts):
             a_tile = inimg[
                 self.xx[gpt_cnt] - self.len_side // 2 : 
@@ -207,8 +207,9 @@ class data_maker_4D:
             a_tile = a_tile.reshape(
                 self.len_side*self.len_side, self.n_r, self.n_c)
             self.X_in[gpt_cnt] = a_tile[self.mask_range == 1].copy()
-            self.Y_label[gpt_cnt] = a_tile[self.mask_range == 0].copy()
-    
+            if update_label:
+                self.Y_label[gpt_cnt] = a_tile[self.mask_range == 0].copy()
+
     def reconstruct1D(self, out1D_viewed):
         n_pts = self.xx.shape[0]
         out1D_viewed = out1D_viewed.squeeze()

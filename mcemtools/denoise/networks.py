@@ -605,7 +605,7 @@ class ResNet18(nn.Module): #[2,2,2,2]
         
         self.conv1 = nn.Conv2d(
             image_channels, self.mid_channels, kernel_size=3, stride=1)
-        #self.bn = nn.BatchNorm2d(self.mid_channels)
+        self.bn = nn.BatchNorm2d(self.mid_channels)
         self.relu = nn.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size = 3, stride = 2, padding = 1)
         
@@ -632,7 +632,7 @@ class ResNet18(nn.Module): #[2,2,2,2]
     
     def forward(self, x):
         x = self.conv1(x)
-        #x = self.bn(x) ##############################################################
+        x = self.bn(x)
         x = self.relu(x)
         x = self.maxpool(x)
         x = self.layer1(x) 
@@ -851,10 +851,11 @@ class denoise4DSTEM_resNet(nn.Module):
         return(x8)
 
 def test_denoise4DSTEM_resNet():
+    torch.cuda.empty_cache()
     denoiser_model = denoise4DSTEM_resNet().to('cuda')
-    x = torch.randn(2, 1, 7*128, 7*128).to('cuda')
-    y = denoiser_model(x)
-    print(f'{x.shape} --> NN --> {y.shape} ')
+    x = torch.randn(7000, 1, 1024, 1024).float().to('cuda')
+    # y = denoiser_model(x)
+    # print(f'{x.shape} --> NN --> {y.shape} ')
     
 if __name__ == '__main__':
     test_denoise4DSTEM_resNet()
