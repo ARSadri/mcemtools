@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.9.3'
+__version__ = '0.9.4'
 
 from .mcemtools import viewer_4D
 
@@ -43,5 +43,4 @@ from .data import (open_muSTEM_binary,
 from .denoise.denoise4_tsvd     import denoise4_tsvd
 from .denoise.denoise4net       import denoise4net
 from .denoise.cluster4net       import cluster4net
-from .denoise.DATOS             import DATOS
-from .denoise.nn_from_torch     import nn_from_torch
+from .denoise.DATOS             import DATOS, nn_from_torch

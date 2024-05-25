@@ -112,3 +112,12 @@ History
 0.9.2 (2024-05-02)
 -------------------
 * viewer_4D takes second mask to subtract
+
+0.9.3 (2024-05-24)
+-------------------
+* viewer_4D takes second mask to subtract
+
+0.9.4 (2024-06-01)
+-------------------
+* minimal requirenments and test scripts for denoising is added
+* first denoising example added

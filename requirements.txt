@@ -1,0 +1,11 @@
+lognflow
+scikit-learn
+PyQt5
+PySide6
+napari
+torch
+torchvision
+torchaudio
+pypng
+h5py
+ase

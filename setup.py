@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = '0.9.3'
+__version__ = '0.9.4'
 
 """The setup script."""
 
@@ -12,28 +12,38 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['numpy', 'matplotlib', 'scipy', 
-                'scikit-learn', 'scikit-image', 'lognflow']
+requirements = ['lognflow',
+                'scikit-learn',
+                'PyQt5',
+                'PySide6',
+                'napari',
+                'torch',
+                'torchvision',
+                'torchaudio',
+                'pypng',
+                'h5py',
+                'ase']
 
-test_requirements = ['pytest>=3', ]
+test_requirements = ['pytest>=3.7', ]
 
 setup(
     author="Alireza Sadri",
     author_email='Alireza.Sadri@monash.edu',
-    python_requires='>=3.7',
+    python_requires='>=3.8',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
         'Natural Language :: English',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
     ],
-    description="State of the art analysis tools for electron microscopy",
+    description="State of the art analysis tools for 4D STEM",
     entry_points={
         'console_scripts': [
             'mcemtools=mcemtools.cli:main',

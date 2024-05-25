@@ -166,7 +166,7 @@ class U_Net(nn.Module):
         self.mu = None
         self.PACBED = None
         
-    def forward(self,x, inds):
+    def forward(self,x, inds = None):
         
         x1 = self.Conv1(x)
         

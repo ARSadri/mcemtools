@@ -8,8 +8,7 @@ from lognflow import lognflow, logviewer, printprogress, plt_colorbar
 
 import mcemtools
 
-from .DATOS         import DATOS
-from .nn_from_torch import nn_from_torch
+from .DATOS         import DATOS, nn_from_torch
 from .networks      import U_Net as network4D
 from .networks      import U_Net_fieldImage as network2D
 # from .networks_3 import DcUnet as network4D
