@@ -2,6 +2,7 @@ import re
 import os
 import numpy as np
 from .masking import image_by_windows
+import mcemtools
 
 def load_dm4(filename):
     from hyperspy.api import load as hyperspy_api_load
@@ -103,7 +104,8 @@ class data_maker_2D:
         inimg = inimg.astype('float32')
         self.n_r, self.n_c = inimg.shape
         
-        self.imbywin = image_by_windows(inimg.shape, win_shape, skip)
+        self.imbywin = image_by_windows(
+            inimg.shape, win_shape, skip, method = 'fixed')
         self.Y_label = self.imbywin.image2views(inimg).copy()
         self.Y_label = np.array([self.Y_label]).swapaxes(0, 1)
 
@@ -142,6 +144,86 @@ def np_random_poisson_no_zeros(img):
     return img_noisy
 
 class data_maker_4D:
+    def __init__(self, inimg, groundtruth, len_side = 3,
+                 trainable_area_I4D = None):
+        
+        assert len_side == (len_side//2)*2 + 1,\
+            'data_maker_I4D:len_side should be odd'
+        self.len_side = len_side
+        self.edgew = len_side // 2
+        self.inimg_shape = inimg.shape
+        n_x, n_y, n_r, n_c = inimg.shape
+        self.n_x, self.n_y, self.n_r, self.n_c = inimg.shape
+
+        self.imbywin = mcemtools.image_by_windows(
+            (n_x, n_y), (len_side, len_side), method = 'fixed')
+        
+        self.mask_range = np.ones((len_side, len_side)).astype('int')
+        self.mask_range[len_side //2, len_side // 2] = 0
+        print('mask_range:'); print(self.mask_range)
+        self.mask_range = self.mask_range.ravel()
+        
+        inimg_viewed = self.imbywin.image2views(groundtruth)
+        inimg_viewed = inimg_viewed.reshape(
+            inimg_viewed.shape[0], self.len_side**2, self.n_r, self.n_c)
+        self.GNDTruth = inimg_viewed[:,  self.mask_range == 0].copy()
+                
+        self.update(inimg)
+
+        self.groundtruth_mu = self.reconstruct2D(
+            self.GNDTruth.sum((1, 2, 3)).squeeze())
+        self.groundtruth_PACBED = self.GNDTruth.sum((0, 1)).squeeze()
+        self.noisy_mu = self.reconstruct2D(
+            self.Y_label.sum((1, 2, 3)).squeeze())
+        self.noisy_PACBED = self.Y_label.sum((0, 1)).squeeze()
+        self.cropped_shape = (n_x - len_side , n_y - len_side, n_r, n_c)
+        self.xx = self.imbywin.grid_rows.ravel() + len_side // 2
+        self.yy = self.imbywin.grid_clms.ravel() + len_side // 2
+        self.n_pts = len(self.imbywin)
+        
+        if trainable_area_I4D is not None:
+            trainable_area = np.arange(n_x* n_y).reshape(n_x, n_y)
+            self.trainable_inds = trainable_area[trainable_area_I4D > 0]
+    
+    def update(self, inimg, update_label = True):
+        inimg_viewed = self.imbywin.image2views(inimg)
+        inimg_viewed = inimg_viewed.reshape(
+            inimg_viewed.shape[0], self.len_side**2, self.n_r, self.n_c)
+        
+        self.X_in = inimg_viewed[:, self.mask_range == 1]
+        if update_label:
+            self.Y_label = inimg_viewed[:, self.mask_range == 0]
+        
+    def reconstruct2D(self, outimg_viewed, indices = None):
+        # The input shape is grid.npts
+        img = self.imbywin.views2image(
+                outimg_viewed, include_inds = indices, method = 'fixed',
+                win_shape = (1, 1))
+        return img[self.edgew:-self.edgew, self.edgew:-self.edgew]
+    
+    def reconstruct4D(self, viewed4D, indices = None):
+        # The input shape is grid.npts, 1, n_r, n_c
+        assert viewed4D.shape[1] == 1
+        viewed4D = np.expand_dims(viewed4D, 2)
+        img4d = self.imbywin.views2image(viewed4D, indices, method = 'fixed',
+                                         win_shape = (1, 1))
+        return img4d
+                
+    def dist2Truth(self, pred, ind):
+        return np.linalg.norm(pred - self.GNDTruth[ind])
+    
+    def dist2label(self, pred, ind):
+        return np.linalg.norm(pred - self.Y_label[ind])    
+
+    def __call__(self, inds):
+        try:
+            _ = inds.shape[0]
+        except:
+            inds = np.array([inds])
+        return(self.X_in[inds], self.Y_label[inds])
+
+
+class data_maker_4D_old:
     def __init__(self, inimg, groundtruth, len_side = 3,
                  trainable_area_I4D = None):
         
@@ -378,3 +460,16 @@ class feature_maker_4D:
         except:
             inds = np.array([inds])
         return(self.X_in[inds], self.Y_label[inds])    
+
+def np_random_poisson_no_zeros(data4D_nonoise):
+    data4D_noisy = 0*data4D_nonoise.copy()
+    print('All patterns must have at least one electron', end = '')
+    while (data4D_noisy.sum((2, 3)) == 0).sum() > 0:
+        ne_ele_patterns = data4D_noisy.sum((2, 3)) == 0
+        _data4D_noisy = np.random.poisson(
+            data4D_nonoise[ne_ele_patterns]).astype('float32')
+        data4D_noisy[ne_ele_patterns] = _data4D_noisy.copy()
+        print(f', {(data4D_noisy.sum((2, 3)) == 0).sum()}', 
+              end = '', flush = True)
+    print(', done!')
+    return data4D_noisy

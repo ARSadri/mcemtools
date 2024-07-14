@@ -215,7 +215,8 @@ class nn_from_torch:
                  momentum = 1e-7,
                  fix_during_infer = False,
                  optimizer = None,
-                 preds_as_tuple_index = None):
+                 preds_as_tuple_index = None,
+                 test_mode = False):
         """ Using pytorch 
             The optimizer must be SGD. So we only accept the 
             learning_rate and momentum for SGD.
@@ -233,29 +234,44 @@ class nn_from_torch:
         self.device = device
         self.logger = logger
         self.infer_size = None
+        self.test_mode = test_mode
         try:
             self.lossFunc = lossFunc.float()
             self.lossFunc = self.lossFunc.to(device)
         except:
             pass
-        if optimizer is None:
+        if test_mode:
+            self.optimizer = None
+        elif optimizer is None:
             self.optimizer = torch.optim.SGD(self.torchModel.parameters(),
                                              lr = learning_rate,
                                              momentum = momentum)
         else:
             self.optimizer = optimizer
+        
+        
         self.pass_indices_to_model = pass_indices_to_model
         
         self.fix_during_infer = fix_during_infer
 
     def update_learning_rate(self, lr):
-        for g in self.optimizer.param_groups:
-            g['lr'] = lr
-    
-    def update_momentum(self, momentum):
-        for g in self.optimizer.param_groups:
-            g['momentum'] = momentum
+        if self.optimizer is not None:
+            for g in self.optimizer.param_groups:
+                g['lr'] = lr
         
+    def update_momentum(self, momentum):
+        if self.optimizer is not None:
+            for g in self.optimizer.param_groups:
+                g['momentum'] = momentum
+    
+    def reset(self):
+        for layer in self.torchModel.children():
+           if hasattr(layer, 'reset_parameters'):
+               layer.reset_parameters()
+    
+    def load_parameters(self, fpath):
+        self.torchModel.load_state_dict(torch.load(fpath), strict=False)
+    
     def update(self, indices):
         """use the netowrk by PytTorch
             Call this function when infering data for sorting or for trianing
@@ -367,33 +383,35 @@ class nn_from_torch:
                     preds = self.torchModel(data, _indices)
                 else:
                     preds = self.torchModel(data)
-                data = data.detach().to('cpu')
-                del data
                 if(not torch.is_tensor(labels)):
                     labels = torch.from_numpy(labels).float().to(self.device)
-                
-                if self.fix_during_infer:    
-                    attrs_to_restore = (
-                        self.lossFunc.accumulated_PACBED,
-                        self.lossFunc.accumulated_n_images,
-                        self.lossFunc.accumulated_mSTEM,
-                        self.lossFunc.mSTEM_loss_factor)
-                    
-                if(self.pass_indices_to_model):
-                    loss = self.lossFunc(preds, labels, _indices)
+                if self.test_mode:
+                    loss = np.zeros(len(preds))
                 else:
-                    loss = self.lossFunc(preds, labels)
-    
-                if self.fix_during_infer:    
-                    self.lossFunc.accumulated_PACBED, \
-                        self.lossFunc.accumulated_n_images, \
-                        self.lossFunc.accumulated_mSTEM, \
-                        self.lossFunc.mSTEM_loss_factor = attrs_to_restore
-                    
-                # loss = self.lossFunc(preds, labels)
+                    if self.fix_during_infer:    
+                        attrs_to_restore = (
+                            self.lossFunc.accumulated_PACBED,
+                            self.lossFunc.accumulated_n_images,
+                            self.lossFunc.accumulated_mSTEM,
+                            self.lossFunc.mSTEM_loss_factor)
+                        
+                    if(self.pass_indices_to_model):
+                        loss = self.lossFunc(preds, labels, _indices)
+                    else:
+                        loss = self.lossFunc(preds, labels)
+        
+                    if self.fix_during_infer:    
+                        self.lossFunc.accumulated_PACBED, \
+                            self.lossFunc.accumulated_n_images, \
+                            self.lossFunc.accumulated_mSTEM, \
+                            self.lossFunc.mSTEM_loss_factor = attrs_to_restore
+                        
+                    loss = loss.detach().to('cpu').numpy()
+
+                data = data.detach().to('cpu')
+                del data
                 labels = labels.detach().to('cpu')
                 del labels
-                loss = loss.detach().to('cpu').numpy()
                 losses[pt_start:pt_stop] = loss.copy()
                 del loss
                 if self.preds_as_tuple_index is not None:

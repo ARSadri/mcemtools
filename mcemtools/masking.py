@@ -142,12 +142,20 @@ class image_by_windows:
         assert win_shape[1]<= n_c, 'win must be smaller than the image'
 
         if(method == 'fixed'):
+            
             rows = np.arange(0, n_r - win_shape[0] + 1, skip_r)
             clms = np.arange(0, n_c - win_shape[1] + 1, skip_c)
+            warning = False
             if rows[-1] < n_r - win_shape[0]:
                 rows = np.concatenate((rows, np.array([n_r - win_shape[0]])))
+                warning = True
             if clms[-1] < n_c - win_shape[1]:
                 clms = np.concatenate((clms, np.array([n_c - win_shape[1]])))
+                warning = True
+            if warning:
+                print('WARNING by image_by_windows.init: when using fixed, '
+                      'you may wish to make sure img_shape is divisible by skip. '
+                      'With the current setting, you may have artifacts.')
         if(method == 'linear'):
             rows = np.linspace(
                 0, n_r - win_shape[0],n_r // skip_r, dtype = 'int')
@@ -155,70 +163,111 @@ class image_by_windows:
             clms = np.linspace(
                 0, n_c - win_shape[1],n_r // skip_c, dtype = 'int')
             clms = np.unique(clms)
-        grid_clms, grid_rows = np.meshgrid(clms, rows)
+        self.grid_clms, self.grid_rows = np.meshgrid(clms, rows)
         self.grid_shape = (len(rows), len(clms))
-        self.grid = np.array([grid_rows.ravel(), grid_clms.ravel()]).T
+        self.grid = np.array([self.grid_rows.ravel(), self.grid_clms.ravel()]).T
         self.n_pts = self.grid.shape[0]
         
     def image2views(self, img):
         all_other_dims = ()
         if (len(img.shape)>2):
             all_other_dims = img.shape[2:]
-        views = np.zeros(
-            (self.grid.shape[0], self.win_shape[0], self.win_shape[1]
-             ) + all_other_dims,
-            dtype = img.dtype)
-        for gcnt, grc in enumerate(self.grid):
-            gr, gc = grc
-            views[gcnt] = img[
-                gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]].copy()
+        try: #numpy
+            img_dtype = img.dtype
+            views = np.zeros(
+                (self.grid.shape[0], self.win_shape[0], self.win_shape[1]
+                 ) + all_other_dims,
+                dtype = img_dtype)
+            for gcnt, grc in enumerate(self.grid):
+                gr, gc = grc
+                views[gcnt] = img[
+                    gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]].copy()
+        except:#torch or others
+            views = []
+            for gcnt, grc in enumerate(self.grid):
+                gr, gc = grc
+                views.append(
+                    img[gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]])
         return views
     
-    def views2image(self, views, method = 'linear'):
+    def views2image(self, views, include_inds = None, method = 'linear',
+                    win_shape = None):
+        if win_shape is None:
+            win_shape = self.win_shape
+
+        win_start = ((self.win_shape[0] - win_shape[0])//2,
+                     (self.win_shape[1] - win_shape[1])//2)
+        
         img_shape = (self.img_shape[0], self.img_shape[1])
-        if (len(views.shape) > 3):
+        if (len(views.shape) == 5):
             img_shape += views.shape[3:]
 
         assert len(views.shape) != 2, 'views2image: views cannot be 2D yet!'
 
+        if include_inds is None:
+            grid = self.grid.copy()
+        else:
+            grid = self.grid[include_inds].copy()
+
         if(method == 'linear'):
             img = np.zeros(img_shape, dtype = views.dtype)
             visited = np.zeros(img_shape, dtype = views.dtype)
-            for gcnt, grc in enumerate(self.grid):
+            for gcnt, grc in enumerate(grid):
                 gr, gc = grc
-                img[gr:gr + self.win_shape[0], 
-                    gc:gc + self.win_shape[1]] += views[gcnt]
-                visited[gr:gr + self.win_shape[0], 
-                        gc:gc + self.win_shape[1]] += 1
+                img[gr:gr + win_shape[0], 
+                    gc:gc + win_shape[1]] += views[gcnt]
+                visited[gr:gr + win_shape[0], 
+                        gc:gc + win_shape[1]] += 1
             img[visited>0] = img[visited>0] / visited[visited>0]
+        elif(method == 'fixed'):
+            img = np.zeros(img_shape, dtype = views.dtype)
+            for gcnt, grc in enumerate(grid):
+                gr, gc = grc
+                img[gr + win_start[0]:gr + win_start[0] + win_shape[0], 
+                    gc + win_start[1]:gc + win_start[1] + win_shape[1]] = \
+                        views[gcnt]
         else:
             img = np.zeros(
-                (self.win_shape[0]*self.win_shape[1],) + img_shape, 
-                views.dtype)
-            visited = np.zeros(
-                (self.win_shape[0] * self.win_shape[1], 
-                 img_shape[0], img_shape[1]), dtype='int')
-            for gcnt, grc in enumerate(self.grid):
+                (win_shape[0]*win_shape[1],) + img_shape, views.dtype)
+            visited = np.zeros((win_shape[0] * win_shape[1], 
+                                img_shape[0], img_shape[1]), dtype='int')
+            for gcnt, grc in enumerate(grid):
                 gr, gc = grc
-                level2use = visited[
-                    :, gr:gr + self.win_shape[0], 
-                       gc:gc + self.win_shape[1]].max(2).max(1)
+                level2use = visited[:, gr:gr + win_shape[0], 
+                                       gc:gc + win_shape[1]].max(2).max(1)
                 level = np.where(level2use == 0)[0][0]
-                img[level, gr:gr + self.win_shape[0],
-                           gc:gc + self.win_shape[1]] += views[gcnt]
+                img[level, gr:gr + win_shape[0],
+                           gc:gc + win_shape[1]] += views[gcnt]
                 visited[level, 
-                    gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]] = 1
+                    gr:gr + win_shape[0], gc:gc + win_shape[1]] = 1
             if(method == 'max'):
                 img = img.max(0).squeeze()
             if(method == 'min'):
                 img = img.min(0).squeeze()
         return img
+    
+    def __len__(self):
+        return self.n_pts
+    
+def test_image_by_windows():
+    img = np.ones((25, 25))
+    imbywin = image_by_windows(img_shape = (img.shape[0], img.shape[1]), 
+                               win_shape = (8, 8),
+                               skip = (8, 8),
+                               method = 'fixed')
+    img_windowed = imbywin.image2views(img)
+    print(f'img_windowed shape: {img_windowed.shape}')
+    img_recon = imbywin.views2image(img_windowed, method = 'fixed')
+    print(f'img_recon shape: {img_recon.shape}')
+    from lognflow import plt_imshow
+    plt_imshow(img_recon); plt.show(); exit()
 
 class markimage:
     def __init__(self, 
                  in_image, 
                  mark_shape = 'circle',
                  figsize=(10, 5),
+                 shape_color = "k",
                  **kwargs_for_imshow):
         self.mark_shape = mark_shape
         self.fig, axs = plt.subplots(1, 2, figsize=figsize)
@@ -255,7 +304,7 @@ class markimage:
             sl2 = plt.axes([0.25, 0.1,  0.6, 0.03])
             sl3 = plt.axes([0.25, 0.05, 0.6, 0.03])
             self.markshape = plt.Circle(
-                (cy,cx), circle_radius, ec="k", fc = 'None')
+                (cy,cx), circle_radius, ec=shape_color, fc = 'None')
             axs[0].add_patch(self.markshape)
             self.slider_r = Slider(sl1, 
                 'radius', 0.0, self.im.get_array().shape[0]/2, 
@@ -284,7 +333,7 @@ class markimage:
                 (top_left_r, top_left_c), 
                 bot_right_r - top_left_r, 
                 bot_right_c - top_left_c,
-                ec="k", fc = 'None')
+                ec=shape_color, fc = 'None')
             axs[0].add_patch(self.markshape)
             self.slider_top_left_r = Slider(
                 s_top_left_r, 'top_left_x', 0.0, 
@@ -376,3 +425,6 @@ def remove_islands_by_size(
         logger(f'{np.sort(n_p)}')
    
     return (segments_map)
+
+if __name__ == '__main__':
+    test_image_by_windows()

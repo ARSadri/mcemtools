@@ -121,3 +121,7 @@ History
 -------------------
 * minimal requirenments and test scripts for denoising is added
 * first denoising example added
+
+0.9.4 (2024-06-01)
+-------------------
+* many bugs fixed for the denoiser

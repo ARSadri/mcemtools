@@ -3,6 +3,7 @@ from .masking import annular_mask, mask2D_to_4D, image_by_windows
 from lognflow import printprogress, lognflow
 from skimage.transform import warp_polar
 from itertools import product
+import torch
 
 def normalize_4D(data4D, weights4D = None, method = 'loop'):
     """
@@ -331,6 +332,58 @@ def std_4D(data4D, mask4D = None):
     
     return totI, PACBED
 
+def CoM_torch(data4D, mask4D = None, normalize = True, 
+              row_grid_cube = None, clm_grid_cube = None):
+    """ modified from py4DSTEM
+    
+        I wish they (py4DSTEM authors) had written it as follows.
+        Calculates two images - centre of mass x and y - from a 4D data4D.
+
+    Args
+    ^^^^^^^
+        :param data4D: np.ndarray 
+            the 4D-STEM data of shape (n_x, n_y, n_r, n_c)
+        :param mask4D: np.ndarray
+            a 4D array, optionally, calculate the CoM only in the areas 
+            where mask==True
+        :param normalize: bool
+            if true, subtract off the mean of the CoM images
+    Returns
+    ^^^^^^^
+        :returns: (2-tuple of 2d arrays), the centre of mass coordinates, (x,y)
+        :rtype: np.ndarray
+    """
+    n_x, n_y, n_r, n_c = data4D.shape
+
+    if mask4D is not None:
+        assert mask4D.shape == data4D.shape,\
+            f'mask4D with shape {mask4D.shape} should have '\
+            + f'the same shape as data4D with shape {data4D.shape}.'
+    if (row_grid_cube is None) | (clm_grid_cube is None):
+        clm_grid, row_grid = np.meshgrid(np.arange(n_c), np.arange(n_r))
+        row_grid_cube      = np.tile(row_grid,   (n_x, n_y, 1, 1))
+        clm_grid_cube      = np.tile(clm_grid,   (n_x, n_y, 1, 1))
+        row_grid_cube = torch.from_numpy(row_grid_cube).to(data4D.device).float()
+        clm_grid_cube = torch.from_numpy(clm_grid_cube).to(data4D.device).float()
+    
+    if mask4D is not None:
+        mass = (data4D * mask4D).sum(3).sum(2).float()
+        CoMx = (data4D * row_grid_cube * mask4D).sum(3).sum(2).float()
+        CoMy = (data4D * clm_grid_cube * mask4D).sum(3).sum(2).float()
+    else:
+        mass = data4D.sum(3).sum(2).float()
+        CoMx = (data4D * row_grid_cube).sum(3).sum(2).float()
+        CoMy = (data4D * clm_grid_cube).sum(3).sum(2).float()
+        
+    CoMx[mass!=0] = CoMx[mass!=0] / mass[mass!=0]
+    CoMy[mass!=0] = CoMy[mass!=0] / mass[mass!=0]
+
+    if normalize:
+        CoMx -= CoMx.mean()
+        CoMy -= CoMy.mean()
+
+    return CoMx.float(), CoMy.float(), row_grid_cube, clm_grid_cube
+
 def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
     """ modified from py4DSTEM
     
@@ -547,3 +600,20 @@ def stem_image_nyquist_interpolation(
     StemImageInterpolated = StemImageInterpolated * (npixout * npiyout) / (npix * npiy)
    
     return StemImageInterpolated
+
+def force_stem_4d(a4d, b4d):
+    """ force stem
+        force the stem image of 4d dataset a to be the stem image of 4d dataset b.
+    """
+    
+    stem = a4d.mean((2, 3))
+    stem = np.expand_dims(np.expand_dims(stem, -1), -1)
+    stem = np.tile(stem, (1, 1, a4d.shape[2],a4d.shape[3]))
+    a4d[stem != 0] /= stem[stem != 0]
+    a4d[stem == 0] = 0
+    stem = b4d.mean((2, 3))
+    stem = np.expand_dims(np.expand_dims(stem, -1), -1)
+    stem = np.tile(stem, (1, 1, a4d.shape[2],a4d.shape[3]))
+    a4d[stem != 0] *= stem[stem != 0]
+    a4d[stem == 0] = 0
+    return a4d

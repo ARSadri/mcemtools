@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 
-def get_polar_coords(image_shape, centre, polar_shape):
+def get_polar_coords(image_shape, polar_shape, centre = None):
     n_angles, n_rads = polar_shape
     n_rows, n_clms = image_shape
     if (centre is None):
@@ -67,7 +67,7 @@ def polar2image(data, image_shape, dataq = None, centre = None,
         if (centre is None):
             centre = (n_rows//2, n_clms//2)
         angles_pix_in_polar, anglesq_pix_in_polar, rads_pix_in_polar, rr, cc = \
-            get_polar_coords(image_shape, centre, (n_angles, n_rads))
+            get_polar_coords(image_shape, (n_angles, n_rads), centre)
     else:
         angles_pix_in_polar, anglesq_pix_in_polar, rads_pix_in_polar, rr, cc = \
             get_polar_coords_output
@@ -116,7 +116,7 @@ def image2polar(data,
         if (centre is None):
             centre = (n_rows//2, n_clms//2)
         angles_pix_in_polar, anglesq_pix_in_polar, rads_pix_in_polar, rr, cc = \
-            get_polar_coords((n_rows, n_clms), centre, (n_angles, n_rads))
+            get_polar_coords((n_rows, n_clms), (n_angles, n_rads), centre)
     else:
         angles_pix_in_polar, anglesq_pix_in_polar, rads_pix_in_polar, rr, cc = \
             get_polar_coords_output
@@ -142,12 +142,12 @@ def image2polar(data,
     return (polar_image, polar_imageq, polar_mask, polar_maskq)
 
 class polar_transform:
-    def __init__(self, image_shape, centre, polar_shape):
+    def __init__(self, image_shape, polar_shape, centre = None):
         self.image_shape = image_shape
         self.polar_shape = polar_shape
         self.centre = centre
         self.get_polar_coords_output = \
-            get_polar_coords(self.image_shape, self.centre, self.polar_shape)
+            get_polar_coords(self.image_shape, self.polar_shape, self.centre)
     def image2polar(self, data):
         return image2polar(data, self.polar_shape[0], self.polar_shape[1],
                            self.centre, self.get_polar_coords_output)

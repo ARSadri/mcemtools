@@ -1,13 +1,18 @@
 import numpy as np
 import pathlib
 import matplotlib.pyplot as plt
-from lognflow import printprogress, select_directory, lognflow
+from lognflow import printprogress, select_directory, lognflow, plt_imshow
 from .analysis import sum_4D, swirl_and_sum
 from .masking import mask2D_to_4D
 from .transforms import data4D_to_frame
 import time
+import mcemtools
 
 def dummy_function(*args, **kwargs): ...
+
+def nvidia_smi_line(important_line = 9):
+    memory_free_info = sp.check_output('nvidia-smi').decode('ascii').split('\n')
+    return memory_free_info[important_line]
 
 class viewer_4D:
     def __init__(self, data4D, 
@@ -44,6 +49,7 @@ class viewer_4D:
             viewer.bind_key(key = 'F5'   , func = self.update_by_masked_sum_4D)
 
         self.viewers_list[1].bind_key(key = 'g', func = self.show_frame4D)
+        self.viewers_list[0].bind_key(key = 'c', func = self.show_CoM)
         
         self.viewers_list[0].mouse_drag_callbacks.append(self.mouse_drag_event)
         self.viewers_list[1].mouse_drag_callbacks.append(self.mouse_drag_event)
@@ -67,8 +73,9 @@ class viewer_4D:
         self.logger(f'showing mask for viewer {viewer_index}')
         mask2D = self.mask2D_list[viewer_index] - self.mask2D_neg_list[viewer_index]
         try:
-            self.logger.log_single(
+            fpath = self.logger.log_single(
                 'mask', mask2D,time_tag = False)
+            print(f'mask saved to: {fpath}')
         except:
             pass
         plt.figure()
@@ -203,6 +210,33 @@ class viewer_4D:
         self.logger(f'shape_type:{viewer.layers[1].shape_type}')
         self.logger(f'data:{viewer.layers[1].data}')
         self.logger(f'edge_width:{viewer.layers[1].edge_width}')
+    
+    def show_CoM(self, viewer):
+        print('c pressed', flush = True)
+        viewer_index = self.viewers_list.index(viewer)
+        self.logger(f'showing CoM for the mask in viewer {viewer_index}')
+        data4D_shape_select = viewer.layers[0].data.shape
+        mask2D = np.ones(data4D_shape_select, dtype='int8')
+        if(len(viewer.layers) > 1):
+            mask2D = self.get_mask2D(viewer.layers[1], data4D_shape_select)
+        
+        self.logger(f'mask2D.sum() " {mask2D.sum()}')
+        if(mask2D.sum() > 0):
+            mask4D = mask2D_to_4D(mask2D, self.data4D.shape)
+            CoM_x, CoM_y = mcemtools.centre_of_mass_4D(self.data4D.copy(), mask4D)
+            try:
+                self.logger.log_imshow('CoM_x', CoM_x)
+                self.logger.log_single('CoM_x', CoM_x)
+                self.logger.log_imshow('CoM_y', CoM_y)
+                self.logger.log_single('CoM_y', CoM_y)
+            except:
+                pass
+            plt_imshow(CoM_x + 1j * CoM_y, cmap = 'complex',
+                       title = f'centre_of_mass_4D for viewer {viewer_index}')
+            plt.show()
+        else:
+            self.logger('No mask is selected, and I am surely not turning ' + \
+                        'the whole datset into a frame')
     
     def show_frame4D(self, viewer):
         print('f pressed', flush = True)

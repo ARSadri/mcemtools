@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 class FocalLossV1(nn.Module):
     def __init__(self,
@@ -190,14 +191,14 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
                  noisy_PACBED = None,
                  noisy_mSTEM = None,
                  PAC_loss_factor = 0.01,
-                 mSTEM_loss_factor = 0.01):
+                 mSTEM_loss_factor = 0.01,
+                 CoNs = None):
         
         super(STEM4D_PoissonLoss_FnormLoss, self).__init__()
         self.LAGMUL = LAGMUL
         self.mask_backprop = mask_backprop
         self.mask_backprop_sum = mask_backprop.sum()
-        self.log_factorial = torch.cumsum(torch.log(
-            torch.arange(1, x_in_max, 1)), axis =0).to(device)
+        
         self.output_stabilizer = output_stabilizer
         
         self.noisy_PACBED = noisy_PACBED
@@ -213,14 +214,16 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         self.accumulated_PACBED.requires_grad = False
         self.accumulated_mSTEM.requires_grad = False
         self.accumulated_inds.requires_grad = False
+        
+        self.CoMs = CoNs
 
     def forward(self, y_out, x_in, inds):
-        with torch.no_grad():
-            n_images = x_in.shape[0]
-            log_factorial_x_in = self.log_factorial[x_in.long()]
-        
-        err_p = x_in * torch.log(y_out + self.output_stabilizer
-                                 ) - y_out - log_factorial_x_in
+        n_images = x_in.shape[0]
+        log_factorial_x_in = torch.from_numpy(np.cumsum(np.log((x_in + 
+            self.output_stabilizer).cpu().numpy())).reshape(x_in.shape)).cuda()
+
+        log_y_out = torch.log(y_out.float() + self.output_stabilizer)
+        err_p = x_in * log_y_out - y_out - log_factorial_x_in
         err_p[:, :, self.mask_backprop == 0] = 0
         res_p = - err_p.sum() / self.mask_backprop_sum / n_images
         
@@ -230,6 +233,11 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         
         res = self.LAGMUL * res_f + (1 - self.LAGMUL)*res_p
         
+        if self.CoMs is None:
+            res_CoMs = 0
+        else:
+            res_CoMs = 0
+            
         if self.noisy_PACBED is None:
             res_PAC = 0
         else:
@@ -329,6 +337,14 @@ class mseLoss(nn.Module):
     def forward(self, inputs, targets, inds = None):
         return (((targets - inputs)**2).mean())**0.5
 
+class CoMLoss(nn.Module):
+    def __init__(self):
+        super(CoMLoss, self).__init__()
+
+    def forward(self, inputs, targets, inds = None):
+        rec_error = (((targets - inputs)**2).mean())**0.5
+        CoM_error = (targets.mean())**2 * (inputs.mean())**2
+        return 0.5*rec_error + 0.5*CoM_error
 
 class justLoss(nn.Module):
     def __init__(self):

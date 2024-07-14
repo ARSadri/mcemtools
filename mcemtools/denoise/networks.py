@@ -138,7 +138,7 @@ class single_conv(nn.Module):
 class U_Net(nn.Module):
     def __init__(self, img_ch=1, output_ch=1, n_kernels = 64, mask = None):
         super(U_Net,self).__init__()
-        
+            
         self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
 
         self.Conv1 = conv_block(ch_in=img_ch,ch_out=n_kernels)
@@ -162,12 +162,11 @@ class U_Net(nn.Module):
         self.Conv_1x1 = nn.Conv2d(n_kernels,output_ch,kernel_size=1,stride=1,padding=0)
 
         self.mask = mask
-        self.mu_eaxct = False
+        self.mu_eaxct = None
         self.mu = None
         self.PACBED = None
         
     def forward(self,x, inds = None):
-        
         x1 = self.Conv1(x)
         
         x2 = self.Maxpool(x1)
@@ -206,10 +205,10 @@ class U_Net(nn.Module):
         for dim in range(d1.shape[0]):
             if(self.PACBED is not None):
                 d1[dim] *= self.PACBED
-            if(self.mu_eaxct):
+            if(self.mu_eaxct is not None):
                 d1[dim] /= d1[dim].sum()
                 d1[dim] *= self.mu_eaxct[inds[dim]]
-            if(self.mu is not None):
+            elif(self.mu is not None):
                 d1[dim] *= self.mu[inds[dim]]
 
         if(self.mask is not None):
@@ -849,6 +848,18 @@ class denoise4DSTEM_resNet(nn.Module):
         if(self.mask is not None):
             x8[:, :, self.mask[9:-9, 9:-9]==0] = 0
         return(x8)
+
+class truth_network:
+    def __init__(self):
+        self.dgen = ...
+    def eval(self):
+        return
+    def train(self):
+        return
+    def __call__(self, x, inds):
+        _, label = self.dgen(inds)
+        return torch.from_numpy(label).float().cuda()
+
 
 def test_denoise4DSTEM_resNet():
     torch.cuda.empty_cache()

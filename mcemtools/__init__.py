@@ -4,9 +4,9 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.9.4'
+__version__ = '0.9.5'
 
-from .mcemtools import viewer_4D
+from .mcemtools import viewer_4D, nvidia_smi_line
 
 from .analysis   import (cross_correlation_4D,
                        SymmSTEM,
