@@ -4,7 +4,8 @@ import numpy as np
 import scipy.ndimage
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
-from lognflow import lognflow, logviewer, printprogress, plt_colorbar, plt_imshow
+from lognflow import (
+    lognflow, logviewer, printprogress, plt_colorbar, plt_imshow)
 
 import mcemtools
 
@@ -58,9 +59,9 @@ def train_STEM(
                 f'{logger_prefix}_denoiser/training/output_values', output_values)
             # torch_handler.torchModel.Ne_output = \
             #     data_gen_STEM.inimg_mean/output_values.mean()        
-            logger.log_single(f'{logger_prefix}_denoiser/model/Ne_input', 
+            logger.save(f'{logger_prefix}_denoiser/model/Ne_input', 
                    float(torch_handler.torchModel.Ne_input), time_tag = False)
-            logger.log_single(f'{logger_prefix}_denoiser/model/Ne_output', 
+            logger.save(f'{logger_prefix}_denoiser/model/Ne_output', 
                    float(torch_handler.torchModel.Ne_output), time_tag = False)
         DATOS_sampler.sort(fitting_errors[trainable_inds], order = 'descend')
         status = True
@@ -90,7 +91,7 @@ def train_STEM(
                             loss_vals, time_vals, time_tag = False)
         except:
             pass
-    fpath = logger.log_single(f'{logger_prefix}_denoiser/model/model', 
+    fpath = logger.save(f'{logger_prefix}_denoiser/model/model', 
                       torch_handler.torchModel, suffix = 'torch',
                       time_tag = False)
     return fpath
@@ -243,23 +244,23 @@ def train_I4D(
     try:
         logger.log_plot('I4D_denoiser/train/losses', 
                         loss_vals, time_vals, time_tag = False)
-        logger.log_single('I4D_denoiser/train/losses', 
+        logger.save('I4D_denoiser/train/losses', 
                         loss_vals, time_tag = False)
     except:
         logger(f'There is no loss, status is {status}')
-    fpath = logger.log_single('I4D_model/model.torch', 
+    fpath = logger.save('I4D_model/model.torch', 
         torch_handler_I4D.torchModel, time_tag = False)
     if torch_handler_I4D.torchModel.mask is not None:
-        logger.log_single('I4D_model/mask', 
+        logger.save('I4D_model/mask', 
         torch_handler_I4D.torchModel.mask.detach().cpu().numpy())
     if torch_handler_I4D.torchModel.mu_eaxct is not None:
-        logger.log_single('I4D_model/mu_eaxct', 
+        logger.save('I4D_model/mu_eaxct', 
         torch_handler_I4D.torchModel.mu_eaxct.detach().cpu().numpy())
     if torch_handler_I4D.torchModel.mu is not None:
-        logger.log_single('I4D_model/mu', 
+        logger.save('I4D_model/mu', 
         torch_handler_I4D.torchModel.mu.detach().cpu().numpy())
     if torch_handler_I4D.torchModel.PACBED is not None:
-        logger.log_single('I4D_model/PACBED', 
+        logger.save('I4D_model/PACBED', 
         torch_handler_I4D.torchModel.PACBED.detach().cpu().numpy())
     return fpath, perv_loss
 
@@ -301,7 +302,7 @@ def denoise4net(
     
     if(include_training):
         if(not log_exist_ok):
-            logged = logviewer(logs_root)
+            logged = lognflow(log_dir = logs_root)
             exp_list_names = logged.get_flist(
                 f'denoised*/I4D_denoiser/I4D_denoised/denoised_*.npy')
             if len(exp_list_names)>0:
@@ -313,12 +314,11 @@ def denoise4net(
         else:
             logger = lognflow(log_dir = pretrained_I4D_fpath.parent.parent)    
 
-    logger_ref            = lognflow(log_dir = ref_dir)
-    logged_ref            = logger_ref.logged
-    data4D_noisy          = logged_ref.get_single('noisy.npy')
-    data4D_nonoise        = logged_ref.get_single('nonoise.npy')
+    logger_ref            = lognflow(log_dir = ref_dir, time_tag = False)
+    data4D_noisy          = logger_ref.load('noisy.npy')
+    data4D_nonoise        = logger_ref.load('nonoise.npy')
     if use_pre_denoised_STEM:
-        denoised_STEM  = logged_ref.get_single('denoised_STEM*.npy')
+        denoised_STEM  = logger_ref.load('denoised_STEM*.npy')
         if denoised_STEM is None:
             use_pre_denoised_STEM = False
     
@@ -337,20 +337,6 @@ def denoise4net(
     n_probes = hyps_I4D['n_prob']
     edgew = int(n_probes//2)
     
-
-    if not logged_ref.get_flist('canvas_nonoise/nonoise*.*'):
-        mch = mcemtools.data4D_to_frame(data4D_nonoise[
-                edgew:n_canvas_patterns - edgew,
-                edgew:n_canvas_patterns - edgew])
-        im = plt.imshow(mch); plt_colorbar(im)
-        print(logger_ref.log_plt('canvas_nonoise/nonoise', dpi = 4000))  
-        
-        mch = mcemtools.data4D_to_frame(data4D_noisy[
-                edgew:n_canvas_patterns - edgew,
-                edgew:n_canvas_patterns - edgew])
-        im = plt.imshow(mch); plt_colorbar(im)
-        print(logger_ref.log_plt('canvas_noisy/noisy', dpi = 4000))        
-
     #### denoising of STEM image ##########################################
     if(FLAG_denoise_STEM):
         logger(f'hyps_STEM:')
@@ -392,7 +378,7 @@ def denoise4net(
                                   cmap = 'prism', time_tag = False)
                 logger.log_imshow('STEM_denoiser/trainable_mask', trainable_mask > 0, 
                                   cmap = 'gray', time_tag = False)
-                logger.log_single('STEM_denoiser/trainable_mask', trainable_mask, 
+                logger.save('STEM_denoiser/trainable_mask', trainable_mask, 
                                   time_tag = False)
                 #### models definition #################################################
                 torchModel_STEM = network2D(
@@ -444,7 +430,7 @@ def denoise4net(
                 _, denoised_STEM = infer_STEM(torch_handler_STEM, 
                                           data_gen_STEM, logger, 
                                           hyps_STEM['infer_size_STEM'])
-                logger.log_single('STEM_denoiser/denoised_STEM.npy', 
+                logger.save('STEM_denoiser/denoised_STEM.npy', 
                                   denoised_STEM)
                 logger.log_imshow('STEM_denoiser/denoised_STEM.jpg',
                                   denoised_STEM)
@@ -543,7 +529,7 @@ def denoise4net(
                     logger.log_imshow(
                         f'{dir_name}_denoiser/trainable_mask', trainable_mask > 0, 
                                       cmap = 'gray', time_tag = False)
-                    logger.log_single(
+                    logger.save(
                         f'{dir_name}_denoiser/trainable_mask', trainable_mask, 
                                       time_tag = False)
                     #### models definition #################################################
@@ -592,7 +578,7 @@ def denoise4net(
                     _, denoised_CoM = infer_STEM(torch_handler_CoM, 
                                               data_gen_CoM, logger, 
                                               hyps_CoM['infer_size_CoM'])
-                    logger.log_single(f'{dir_name}_denoiser/denoised_CoM.npy', 
+                    logger.save(f'{dir_name}_denoiser/denoised_CoM.npy', 
                                       denoised_CoM)
                     logger.log_imshow(f'{dir_name}_denoiser/denoised_CoM.jpg',
                                       denoised_CoM)
@@ -613,7 +599,7 @@ def denoise4net(
                 denoised_CoM_x, denoised_CoM_y = mcemtools.centre_of_mass_4D(data4D_noisy)
                 denoised_CoMs = np.array([denoised_CoM_x, denoised_CoM_y])
             
-            logger.log_single('denoised_CoMs', denoised_CoMs, time_tag = False)
+            logger.save('denoised_CoMs', denoised_CoMs, time_tag = False)
             logger.log_imshow(
                 'denoised_CoMs', denoised_CoMs[0] + 1j * denoised_CoMs[1], 
                 time_tag = False)
@@ -621,7 +607,7 @@ def denoise4net(
                 'denoised_CoMs_c', denoised_CoMs[0] + 1j * denoised_CoMs[1], 
                 time_tag = False, cmap = 'complex')
         else:
-            denoised_CoMs = logger_ref.logged.get_single('denoised_CoMs.npy')
+            denoised_CoMs = logger_ref.load('denoised_CoMs.npy')
             logger('denoised_CoMs is provided in ref  already!')
     else:
         denoised_CoM_x, denoised_CoM_y = mcemtools.centre_of_mass_4D(data4D_noisy)
@@ -630,7 +616,7 @@ def denoise4net(
     #### Declaring I4D model, loss and data maker ######################
     logger(f'hyps_I4D:')
     logger(hyps_I4D)
-    logger.log_single('I4D_denoiser/n_kernels', 
+    logger.save('I4D_denoiser/n_kernels', 
                       np.array([hyps_I4D['n_kernels']]), time_tag = False)
     logger.log_imshow('I4D_denoised_STEM', denoised_STEM)
     logger.log_imshow('I4D_denoised_PACBED', denoised_PACBED)
@@ -656,7 +642,7 @@ def denoise4net(
 
     logger('Making a training dataset using noisy')
     data_gen_I4D = mcemtools.data_maker_4D(
-        data4D_noisy_new, data4D_nonoise, len_side = n_probes,
+        data4D_noisy_new.astype('float32'), data4D_nonoise, len_side = n_probes,
         trainable_area_I4D = trainable_area_I4D)
     
     recon = data_gen_I4D.reconstruct4D(data_gen_I4D.GNDTruth)
@@ -709,8 +695,8 @@ def denoise4net(
     for ind in trainable_inds:
         trainable_mask[data_gen_I4D.xx[ind], data_gen_I4D.yy[ind]] += 1
     logger.log_imshow('I4D_denoiser/trainable_mask_I4D', trainable_mask, time_tag = False)
-    logger.log_single('I4D_denoiser/trainable_mask_I4D', trainable_mask, time_tag = False)
-    logger.log_single('I4D_denoiser/classes', classes, time_tag = False)
+    logger.save('I4D_denoiser/trainable_mask_I4D', trainable_mask, time_tag = False)
+    logger.save('I4D_denoiser/classes', classes, time_tag = False)
 
     logger(f'There are {data4D_noisy_new[trainable_mask>0].sum()} electrons'
            ' in this dataset.')
@@ -858,7 +844,8 @@ def denoise4net(
             data4D_noisy * (1 - beta) + data4D_noisy_new * beta
         data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
         logger('labels are diffused too.')
-        data_gen_I4D.update(data4D_noisy_diffused)
+        data_gen_I4D.update(
+            data4D_noisy_diffused, update_label = hyps_I4D['refine_by_labels'])
         
         recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
         frame = mcemtools.data4D_to_frame(recon[edgew:5+edgew, edgew:5+edgew])
@@ -866,20 +853,20 @@ def denoise4net(
         del data4D_noisy_diffused
         logger('training dataset is modified with diffused input')
         if(log_denoised_every_sweep):
-            logger.log_single(
+            logger.save(
                 'I4D_denoiser/I4D_denoised_inter/denoised', data4D_noisy_new)
             
         hyps_I4D['learning_rate'] *= hyps_I4D['learning_rate_decay']
         hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
     
-    logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
+    logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
     
     frame_denoised = mcemtools.data4D_to_frame(data4D_noisy_new)
     frame_nonoise = mcemtools.data4D_to_frame(data4D_nonoise)
     frame_noisy = mcemtools.data4D_to_frame(data4D_noisy)
-    logger.log_single('I4D_denoiser/canvases/denoised', frame_denoised)
-    logger.log_single('I4D_denoiser/canvases/nonoise', frame_nonoise)
-    logger.log_single('I4D_denoiser/canvases/noisy', frame_noisy)
+    logger.save('I4D_denoiser/canvases/denoised', frame_denoised)
+    logger.save('I4D_denoiser/canvases/nonoise', frame_nonoise)
+    logger.save('I4D_denoiser/canvases/noisy', frame_noisy)
     
     logger_dir = logger.log_dir
     logger(f'Check in: {logger_dir}')

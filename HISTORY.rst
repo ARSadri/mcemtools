@@ -125,3 +125,11 @@ History
 0.9.4 (2024-06-01)
 -------------------
 * many bugs fixed for the denoiser
+
+0.9.4 (2024-06-01)
+-------------------
+* ...
+
+0.9.6 (2024-08-27)
+-------------------
+* More concerete example is added for geometric flow based denoising for the paper

@@ -170,41 +170,39 @@ def data4D_to_frame(data4D):
                 data4D[xcnt, ycnt]
     return canv
 
-def revalue_elements(vec, new_values = None, new_values_start = None):
+def revalue_elements(data, new_values = None, not_found_value = None):
     """ revalue elements
-        given a numpy nd array, you can revalue each element. This is 
-        particularly useful when you provide indices that sort cluster centers
-        as output of a clustering algorithm to relabel the clustering labels 
-        accordingly. Or it is useful to fill the gaps between values used 
-        inside a vector. 
+        given a numpy nd array, you can revalue each element according to a given
+        list of new values. This means that the value of a group of elements is turned
+        into i if their value is the i-th element of new_values.
         
-        :param vec:
+        if new_values is not provided it will be the unique of the input, reshilting
+        in re-ordering all the elements values of the data from 0 to the maximum
+        of the input.
+        
+        :param data:
             the input numpy ndimensional array to revalue its elements. The
             set of values in the dataset will be::
-                np.unique(vec.ravel())
+                np.unique(data.ravel())
         :param new_values:
             a list or 1d numpy vector for the new values for elements. If not
             given, we make a range of values starting from the smallest
-            value seen in vec to cover all unique values in vec
-        :param start:
-            if new_values are not given but new_values_start is given, we use it
-            tp start the range of values to replace values in vec. 
-        
+            value seen in data to cover all unique values in data
         :returns:
-            a new vector with same type and size of input vec where every 
-            element has changed to have a new value.
+            a new data array with same type and size of input data where every 
+            element has changed to a new value.
             
     """
-    new_vec = 0*vec.copy() - np.inf
-    old_values = np.unique(vec.ravel())
     if new_values is None:
-        if new_values_start is None:
-            new_values_start = old_values.min()
-        new_values = np.arange(
-            new_values_start, old_values.shape[0], dtype=vec.dtype)
-    else:
-        new_values = np.array(new_values)
-        assert old_values.shape[0] == new_values.shape[0]
-    for cnt, old_value in  enumerate(old_values):
-        new_vec[vec == old_value] = new_values[cnt]
-    return new_vec
+        new_values = np.unique(data.ravel())
+    new_data = data.copy()
+
+    lookup_table = np.zeros(data.max() + 1, dtype = int)
+    for i, value in enumerate(new_values):
+        lookup_table[value] = i
+    new_data = lookup_table[data]
+    
+    if not_found_value is not None:
+        new_data[not np.isin(data, new_values)] = not_found_value
+        
+    return new_data

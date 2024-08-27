@@ -44,13 +44,11 @@ def test_new_shape():
     
     for in_shape, new_shape in zip(in_list, new_shape_list):
         tens = (np.random.rand(*in_shape) * 100).astype('int')
-        tens_new_shape = mcemtools.masking.crop_or_pad(
-            tens, new_shape, logger = print)
+        tens_new_shape = mcemtools.masking.crop_or_pad(tens, new_shape)
         print(tens, '\n' + '-'*5 + '\n', tens_new_shape, '\n' + '='*20)
 
 
-    mcemtools.masking.crop_or_pad(
-            np.zeros((3,4,5,6)), (3,4,3,3), logger = print)
+    mcemtools.masking.crop_or_pad(np.zeros((3,4,5,6)), (3,4,3,3))
 
 if __name__ == '__main__':
     test_new_shape()

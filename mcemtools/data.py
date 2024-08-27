@@ -3,6 +3,9 @@ import os
 import numpy as np
 from .masking import image_by_windows
 import mcemtools
+from lognflow import printprogress
+import scipy
+from itertools import product
 
 def load_dm4(filename):
     from hyperspy.api import load as hyperspy_api_load
@@ -154,11 +157,12 @@ class data_maker_4D:
         self.inimg_shape = inimg.shape
         n_x, n_y, n_r, n_c = inimg.shape
         self.n_x, self.n_y, self.n_r, self.n_c = inimg.shape
+        self.dtype = inimg.dtype
 
         self.imbywin = mcemtools.image_by_windows(
             (n_x, n_y), (len_side, len_side), method = 'fixed')
         
-        self.mask_range = np.ones((len_side, len_side)).astype('int')
+        self.mask_range = np.ones((len_side, len_side), dtype = 'int')
         self.mask_range[len_side //2, len_side // 2] = 0
         print('mask_range:'); print(self.mask_range)
         self.mask_range = self.mask_range.ravel()
@@ -209,121 +213,6 @@ class data_maker_4D:
                                          win_shape = (1, 1))
         return img4d
                 
-    def dist2Truth(self, pred, ind):
-        return np.linalg.norm(pred - self.GNDTruth[ind])
-    
-    def dist2label(self, pred, ind):
-        return np.linalg.norm(pred - self.Y_label[ind])    
-
-    def __call__(self, inds):
-        try:
-            _ = inds.shape[0]
-        except:
-            inds = np.array([inds])
-        return(self.X_in[inds], self.Y_label[inds])
-
-
-class data_maker_4D_old:
-    def __init__(self, inimg, groundtruth, len_side = 3,
-                 trainable_area_I4D = None):
-        
-        assert len_side == (len_side//2)*2 + 1,\
-            'data_maker_I4D:len_side should be odd'
-        self.len_side = len_side
-        self.inimg_shape = inimg.shape
-        n_x, n_y, n_r, n_c = inimg.shape
-        self.n_r = n_r
-        self.n_c = n_c
-        self.n_x = n_x
-        self.n_y = n_y
-        grid_x = np.arange(len_side // 2, n_x - len_side // 2, 1, dtype='int')
-        grid_y = np.arange(len_side // 2, n_y - len_side // 2, 1, dtype='int')
-        yy, xx = np.meshgrid(grid_y, grid_x)
-        xx = xx.ravel()
-        yy = yy.ravel()
-        n_pts = xx.shape[0]
-        self.n_xx = grid_x.shape[0]
-        self.n_yy = grid_y.shape[0]
-        self.n_pts = n_pts
-        self.X_in     = \
-            np.zeros((n_pts, len_side*len_side - 1, n_r, n_c), dtype='float32')
-        self.Y_label  = \
-            np.zeros((n_pts,                 1, n_r, n_c), dtype='float32')
-        self.GNDTruth = \
-            np.zeros((n_pts,                 1, n_r, n_c), dtype='float32')
-        self.xx = xx.copy()
-        self.yy = yy.copy()
-        mask_range = np.ones(len_side*len_side).astype('int')
-        mask_range[(len_side * len_side) // 2] = 0        
-        self.mask_range = mask_range.copy()
-        print(f'mask_range:{mask_range}')
-                
-        for gpt_cnt in range(n_pts):     
-            a_tile = groundtruth[
-                xx[gpt_cnt] - len_side // 2 : 
-                    xx[gpt_cnt] + len_side // 2 + 1,
-                yy[gpt_cnt] - len_side // 2 : 
-                    yy[gpt_cnt] + len_side // 2 + 1].copy()
-            a_tile = a_tile.reshape(len_side*len_side, n_r, n_c)
-            self.GNDTruth[gpt_cnt] = a_tile[mask_range == 0].copy()
-
-        self.update(inimg)
-
-        self.groundtruth_mu = self.reconstruct2D(
-            self.GNDTruth.sum(3).sum(2).sum(1).squeeze())
-        self.groundtruth_PACBED = self.GNDTruth.sum(1).sum(0).squeeze()
-        self.noisy_mu = self.reconstruct2D(
-            self.Y_label.sum(3).sum(2).sum(1).squeeze())
-        self.noisy_PACBED = self.Y_label.sum(1).sum(0).squeeze()
-        self.cropped_shape = (grid_x.shape[0], grid_y.shape[0], n_r, n_c)
-        
-        self.trainable_inds = np.arange(self.n_pts, dtype='int')
-    
-    def update(self, inimg, update_label = True):
-        for gpt_cnt in range(self.n_pts):
-            a_tile = inimg[
-                self.xx[gpt_cnt] - self.len_side // 2 : 
-                    self.xx[gpt_cnt] + self.len_side // 2 + 1,
-                self.yy[gpt_cnt] - self.len_side // 2 : 
-                    self.yy[gpt_cnt] + self.len_side // 2 + 1].copy()
-            a_tile = a_tile.reshape(
-                self.len_side*self.len_side, self.n_r, self.n_c)
-            self.X_in[gpt_cnt] = a_tile[self.mask_range == 1].copy()
-            if update_label:
-                self.Y_label[gpt_cnt] = a_tile[self.mask_range == 0].copy()
-
-    def reconstruct1D(self, out1D_viewed):
-        n_pts = self.xx.shape[0]
-        out1D_viewed = out1D_viewed.squeeze()
-        output = np.zeros((self.inimg_shape[0],
-                           self.inimg_shape[1], 2), dtype='float32')
-        for gpt_cnt in range(n_pts):
-            output[self.xx[gpt_cnt], self.yy[gpt_cnt]] = \
-                out1D_viewed[gpt_cnt].copy()
-        output = output[self.len_side//2 : -(self.len_side//2),
-                        self.len_side//2 : -(self.len_side//2)].copy()
-        return output              
-    
-    def reconstruct2D(self, outimg_viewed, indices = None):
-        _outimg_viewed = np.zeros((self.n_xx * self.n_yy), dtype='float32')
-        if indices is None:
-            _outimg_viewed = outimg_viewed.copy()
-        else:
-            _outimg_viewed[indices] = outimg_viewed.copy()
-        return _outimg_viewed.reshape(self.n_xx, self.n_yy)
-    
-    def reconstruct4D(self, viewed4D, indices = None):
-        if indices is None:
-            indices = range(self.xx.shape[0])
-        viewed4D = viewed4D.squeeze()
-        output = np.zeros(self.inimg_shape, dtype='float32')
-        for gpt_cnt, gpt_ind in enumerate(indices):
-            output[self.xx[gpt_ind], self.yy[gpt_ind]] = \
-                viewed4D[gpt_cnt].copy()
-        output = output[self.len_side//2 : -(self.len_side//2),
-                        self.len_side//2 : -(self.len_side//2)].copy()
-        return output              
-        
     def dist2Truth(self, pred, ind):
         return np.linalg.norm(pred - self.GNDTruth[ind])
     
@@ -473,3 +362,128 @@ def np_random_poisson_no_zeros(data4D_nonoise):
               end = '', flush = True)
     print(', done!')
     return data4D_noisy
+
+class segmented_to_4D:
+    def __init__(self, channel_based_data, detector_geometry):
+        self.channel_based_data = channel_based_data
+        self.detector_geometry = detector_geometry
+        self.n_ch, self.n_x, self.n_y = channel_based_data.shape
+        self.n_r, self.n_c = detector_geometry.shape
+        self.shape = (self.n_x, self.n_y, self.n_r, self.n_c)
+        self.dtype = self.channel_based_data.dtype
+        
+    def __getitem__(self, index):
+        # Handle the case where index is a tuple of slices or integers
+        if isinstance(index, tuple):
+            row_index, col_index = index
+            
+            if isinstance(row_index, slice) or isinstance(col_index, slice):
+                # Compute the actual slice ranges
+                row_range = range(*row_index.indices(self.n_x)) \
+                    if isinstance(row_index, slice) else range(self.n_x)
+                col_range = range(*col_index.indices(self.n_y)) \
+                    if isinstance(col_index, slice) else range(self.n_y)
+                
+                # Initialize the output array
+                cbed_slices = np.zeros((len(row_range), len(col_range), self.n_r, self.n_c))
+                
+                force_print = False
+
+                pbar = printprogress(self.n_ch, print_function=None)
+                for segcnt in range(self.n_ch):
+                    mask = self.detector_geometry == segcnt + 1
+                    
+                    # Apply mask and slice
+                    data_slice = self.channel_based_data[segcnt, row_index, col_index]
+                    cbed_slices[:, :, mask] += np.tile(
+                        np.expand_dims(data_slice, -1), (1, 1, mask.sum()))
+                    
+                    ETA = pbar()
+                    if (ETA > 120) & (pbar.in_print_function is None):
+                        pbar = printprogress(self.n_ch - 1)
+                
+                return cbed_slices
+            
+            elif isinstance(row_index, int) and isinstance(col_index, int):
+                # Handle single integer index
+                row, col = row_index, col_index
+                cbed = np.zeros((self.n_r, self.n_c))
+                
+                for segcnt in range(self.n_ch):
+                    mask = (self.detector_geometry == segcnt)
+                    cbed[mask] = self.channel_based_data[segcnt, row, col]
+                
+                return cbed
+            
+            else:
+                raise IndexError("Index must be a tuple of slices or integers")
+        
+        else:
+            raise IndexError("Index must be a tuple")
+
+    def __len__(self):
+        return self.n_x
+    
+    def __repr__(self):
+        return (f"<ChannelTo4D: n_ch={self.n_ch}, n_x={self.n_x}," +
+                f" n_y={self.n_y}, n_r={self.n_r}, n_c={self.n_c}>")
+    
+    def get_BF_weight_per_channel(self, BF_rad, max_rad):
+        radius = BF_rad / max_rad * self.n_r / 2.0
+        mask2d = mcemtools.annular_mask((self.n_r, self.n_c), radius = radius)
+        
+        w_BF = np.zeros(self.detector_geometry.max())
+        w_DF = np.zeros(self.detector_geometry.max())
+        for lblcnt, lbl in enumerate(np.unique(self.detector_geometry)[1:]):
+            w_BF[lblcnt] = ((self.detector_geometry == lbl) & (mask2d == 1)).sum()\
+                                               / (self.detector_geometry == lbl).sum()
+            w_DF[lblcnt] = ((self.detector_geometry == lbl) & (mask2d == 0)).sum()\
+                                               / (self.detector_geometry == lbl).sum()
+    
+        return w_BF, w_DF, mask2d
+    
+    def get_stat(self, weights = None):
+        data_per_ch, det_geo = self.channel_based_data , self.detector_geometry
+        if weights is None:
+            weights = np.ones(self.n_ch)
+        
+        cent_x, cent_y = det_geo.shape[0]//2, det_geo.shape[1]//2
+        pacbed = np.zeros(det_geo.shape)
+        com_x_ch = np.zeros(data_per_ch.shape)
+        com_y_ch = np.zeros(data_per_ch.shape)
+        for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
+            pacbed[det_geo == label] += data_per_ch[cnt].mean() * weights[cnt]
+            mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_geo == label)
+            com_x_ch[cnt] = data_per_ch[cnt]*(mask_com_x - cent_x)
+            com_y_ch[cnt] = data_per_ch[cnt]*(mask_com_y - cent_y)
+        
+        pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
+        
+        com_x = (com_x_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
+        com_y = (com_y_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
+        
+        stem = (data_per_ch * weights[
+            :, np.newaxis, np.newaxis]).sum(0) / weights.sum()
+
+        return stem, pacbed, com_x, com_y, pacbed_com_x, pacbed_com_y
+    
+    def filtered_by_kernel(self, coords, win_side, weights):
+    
+        coords += win_side
+        coords_max = int(coords.max() + 1)
+        kernel = np.zeros((coords_max, coords_max))
+        for win_cnt_i, win_cnt_j in product(range(win_side), range(win_side)):
+            kernel[coords[:, 0] - win_cnt_i, coords[:, 1] - win_cnt_j] = weights
+
+        _, _, com_x, com_y, _, _ = self.get_stat()
+
+        # com_x = -scipy.ndimage.rotate(com_x, -90)
+        # com_y = -scipy.ndimage.rotate(com_y, -90)
+
+        filtered_com_x = scipy.signal.convolve2d(com_x, kernel)
+        filtered_com_y = scipy.signal.convolve2d(com_y, kernel)
+
+        filtered_com_x = filtered_com_x[coords_max:-coords_max, coords_max:-coords_max]
+        filtered_com_y = filtered_com_y[coords_max:-coords_max, coords_max:-coords_max]
+
+        return filtered_com_x, filtered_com_y, kernel

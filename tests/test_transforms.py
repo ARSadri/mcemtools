@@ -40,7 +40,7 @@ def test_get_polar_coords():
     print('%'*60)
     img = np.random.rand(100, 100)
     get_polar_coords_output = mcemtools.get_polar_coords(
-        img.shape, None, (360 - 1, 170 - 1))
+        img.shape, (360 - 1, 170 - 1), None)
     
     mcemtools.image2polar(
         img, get_polar_coords_output = get_polar_coords_output)

@@ -453,28 +453,26 @@ def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
         corr_mat = corr_mat / data4D_a.shape[2] / data4D_a.shape[3]
     return corr_mat
 
-def locate_atoms(data4D, mask4D = None, min_distance = 3,
+def locate_atoms(stem, min_distance = 3, min_distance_init = 1,
                  maxfilter_size = 3, reject_too_close = False,
-                 bck_subtr_params = None):
+                 rgflib_fitBackground_kwargs = None, logger = None):
     
-    n_x, n_y, _, _ = data4D.shape
-    STEM, _ = sum_4D(data4D, mask4D)
+    n_x, n_y = stem.shape
     
-    nSTEM = STEM.max() -STEM.copy()
+    nSTEM = stem.max() -stem.copy()
     
     from skimage.feature import peak_local_max
     import scipy.ndimage
     
-    if bck_subtr_params is not None:
-        from RobustGaussianFittingLibrary import fitBackground
-        mp = fitBackground(nSTEM,
-                           nSTEM > 0,
-                           winX = bck_subtr_params.winXY[0], 
-                           winY = bck_subtr_params.winXY[1],
-                           likelyRatio = bck_subtr_params.likelyRatio, 
-                           certainRatio = bck_subtr_params.certainRatio,
-                           MSSE_LAMBDA = bck_subtr_params.MSSE_LAMBDA,
-                           skip = bck_subtr_params.skip)
+    if rgflib_fitBackground_kwargs is not None:
+        try:
+            from RobustGaussianFittingLibrary import fitBackground
+        except Exception as e:
+            print('You need to >>> pip install RobustGaussianFittingLibrary')
+            raise e
+        if logger is not None: logger('getting mp')
+        mp = fitBackground(nSTEM, **rgflib_fitBackground_kwargs)
+        if logger is not None: logger('mp calculated!')
         SNR = nSTEM - mp[0]
         mpstd = mp[1]
         SNR[mpstd > 0] /= mpstd[mpstd > 0]
@@ -482,37 +480,43 @@ def locate_atoms(data4D, mask4D = None, min_distance = 3,
         nSTEM = SNR.copy()
     
     if maxfilter_size:
+        if logger is not None: logger('max filter!')
         image_max = scipy.ndimage.maximum_filter(
             nSTEM, size=maxfilter_size, mode='constant')
     else:
         image_max = nSTEM.copy()
-    coordinates = peak_local_max(image_max, min_distance=1)
+    if logger is not None: logger('finding peak local max!')
+    coordinates = peak_local_max(image_max, min_distance=min_distance_init)
     
     inds = []
     if(reject_too_close):
-    
+        if logger is not None: logger('rejecting too close ones!')
         dist_coord_to_com = np.zeros(len(coordinates))
         move_by_com = np.zeros((len(coordinates), 2))
+        if logger is not None: pbar = printprogress(len(coordinates),
+                                                    print_function = logger)
         for ccnt, coord in enumerate(coordinates):
-            r_start = coord[0] - min_distance
-            r_end   = coord[0] + min_distance + 1
-            c_start = coord[1] - min_distance
-            c_end   = coord[1] + min_distance + 1
+            coord_0, coord_1 = coord
+            r_start = coord_0 - min_distance
+            r_end   = coord_0 + min_distance + 1
+            c_start = coord_1 - min_distance
+            c_end   = coord_1 + min_distance + 1
             
             if ( r_end >= n_x):
                 r_end = n_x
-                r_start = 2 * coord[0] - r_end
+                r_start = 2 * coord_0 - r_end
             if ( r_start < 0):
                 r_start = 0
-                r_end = 2 * coord[0]
+                r_end = 2 * coord_0
             if ( c_end >= n_y):
                 c_end = n_y
-                c_start = 2 * coord[1] - c_end
+                c_start = 2 * coord_1 - c_end
             if ( c_start < 0):
                 c_start = 0
-                c_end = 2 * coord[1]
+                c_end = 2 * coord_1
             
             local_stem = nSTEM[r_start: r_end, c_start: c_end].copy()
+
             cy, cx = scipy.ndimage.center_of_mass(local_stem)
             cx += 0.5
             cy += 0.5
@@ -520,7 +524,9 @@ def locate_atoms(data4D, mask4D = None, min_distance = 3,
                                           cy - local_stem.shape[1]/2])
             dist_coord_to_com[ccnt] = (
                 move_by_com[ccnt, 0]**2 + move_by_com[ccnt, 1]**2)**0.5
-            
+            if logger is not None: pbar()
+        
+        if logger is not None: logger('getting typical distances!')
         try:
             from RobustGaussianFittingLibrary import fitValue
         except Exception as e:
@@ -534,6 +540,7 @@ def locate_atoms(data4D, mask4D = None, min_distance = 3,
         dist2_threshold = np.minimum(dist2_threshold, dist2.min(1).mean())
         dist2_cpy = dist2.copy()
         
+        if logger is not None: logger('keeping those with normal distances!')
         for single_ind, single_dist2 in enumerate(dist2_cpy):
             _tmp = dist_coord_to_com[single_dist2 < dist2_threshold].copy()
             if _tmp.any():
