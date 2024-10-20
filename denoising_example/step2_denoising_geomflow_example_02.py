@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 
 import pathlib
-import numpy as np
 from   addict import Dict
-from   lognflow import lognflow, logviewer, plt_imshow
-import matplotlib.pyplot as plt
+from   lognflow import lognflow
+from   lognflow.plt_utils import np, plt, plt_imshow
 
 import mcemtools
-from mcemtools import denoise4net
+from mcemtools import denoise4_unet
 from mcemtools.data import np_random_poisson_no_zeros
 
 def criterion_I4D_LAGMUL(kcnt, n_ksweeps): 
@@ -114,8 +113,8 @@ def make_problem(FLAG_make_problem,
             print('data4D_noisy_diffused made')
         
     elif(0):
-        logged = logviewer(exp_nonoise_fpath.parent)
-        data4D_nonoise = logged.get_single(exp_nonoise_fpath.name)['I4D_no_noise']
+        logged = lognflow(log_dir=exp_nonoise_fpath.parent)
+        data4D_nonoise = logged.load(exp_nonoise_fpath.name)['I4D_no_noise']
         data4D_nonoise = data4D_nonoise.swapaxes(1,2).swapaxes(2,3).swapaxes(0,1).swapaxes(1,2)
         # data4D_nonoise = data4D_nonoise[:, :, :-1, :-1]
         data4D_nonoise = np.tile(data4D_nonoise, (4, 4, 1, 1))
@@ -193,43 +192,29 @@ def make_problem(FLAG_make_problem,
         
     elif(1):
         n_probes = problem_args['n_probes']
-        logged = logviewer(exp_nonoise_fpath.parent)
-        data4D_nonoise = logged.get_single(
+        logged = lognflow(log_dir=exp_nonoise_fpath.parent)
+        data4D_nonoise = logged.load(
             exp_nonoise_fpath.name, suffix = '.npy', verbose = True)
-        
-        data4D_nonoise = data4D_nonoise[:n_probes, :n_probes]
-        # data4D_nonoise = mcemtools.bin_4D(data4D_nonoise, 1, 2)
+        data4D_nonoise = data4D_nonoise.astype('float32')
         data4D_nonoise *= problem_args.Ne
         data4D_noisy = np_random_poisson_no_zeros(data4D_nonoise)
         n_x, n_y, n_r, n_c = data4D_noisy.shape
-        # data4D_nonoise = data4D_nonoise[
-        #     :, :, n_r//2 - 8: n_r//2 + 8, 
-        #           n_c//2 - 8: n_c//2 + 8]
-        # data4D_noisy = data4D_noisy[
-        #     :, :, n_r//2 - 8: n_r//2 + 8, 
-        #           n_c//2 - 8: n_c//2 + 8]
-        # print(f'data4D_nonoise.shape: {data4D_nonoise.shape}')
-        # if exp_noisy_fpath is not None:
-        #     denoised = np.load(exp_noisy_fpath)
-        #     noisy = np.load(problem_args['ref_noisy_fpath'])
-        #     data4D_noisy = noisy * (1 - problem_args[
-        #         'denprog']) + denoised * problem_args.denprog
 
     elif(0):
-        logged = logviewer(exp_nonoise_fpath.parent)
+        logged = lognflow(log_dir=exp_nonoise_fpath.parent)
         
         def read_raw(fpath):
             return mcemtools.load_raw(fpath, (256, 256), (128, 128))
         
-        data4D_nonoise = logged.get_single(
+        data4D_nonoise = logged.load(
             exp_nonoise_fpath.name, read_func = read_raw)
         data4D_nonoise[data4D_nonoise < 30] = 0
         data4D_nonoise = data4D_nonoise.astype('float32') / 575.0
         
         # mcemtools.viewer_4D(data4D_nonoise, logger = print); exit()
         # data4D_nonoise = data4D_nonoise[:, :, 64-24:64+24, 64-24:64+24]
-        logged = logviewer(exp_noisy_fpath.parent)
-        data4D_noisy = logged.get_single(
+        logged = lognflow(log_dir=exp_noisy_fpath.parent)
+        data4D_noisy = logged.load(
             exp_noisy_fpath.name, read_func = read_raw)
         data4D_noisy[data4D_noisy < 30] = 0
         data4D_noisy = data4D_noisy.astype('float32') / 575.0
@@ -264,13 +249,13 @@ def make_problem(FLAG_make_problem,
             # mcemtools.markimage(data4D_nonoise.sum(1).sum(0).squeeze()), exit()
             data4D_nonoise = data4D_nonoise[..., 65-32:65+32, 64-32:64+32]
     elif(0):
-        logged = logviewer(exp_nonoise_fpath.parent)
-        data4D_nonoise = logged.get_single(exp_nonoise_fpath.name
+        logged = lognflow(log_dir=exp_nonoise_fpath.parent)
+        data4D_nonoise = logged.load(exp_nonoise_fpath.name
                                            ).astype('float32')
         data4D_noisy = data4D_nonoise.copy()
     elif(0):
-        logged = logviewer(exp_nonoise_fpath.parent)
-        data4D_nonoise = logged.get_single(
+        logged = lognflow(log_dir=exp_nonoise_fpath.parent)
+        data4D_nonoise = logged.load(
             exp_nonoise_fpath.name).astype('float32')
         data4D_nonoise[:, :, data4D_nonoise.sum((0, 1)) > 5000] = 0
         
@@ -315,20 +300,20 @@ def make_problem(FLAG_make_problem,
                                               data4D_noisy.shape[3]), 
                                               radius = 16,
                                               in_radius = None)
-        logger.log_single('premask_noisy', data4D_noisy, time_tag = False)
-        logger.log_single('premask_nonoise', data4D_noisy, time_tag = False)
+        logger.save('premask_noisy', data4D_noisy, time_tag = False)
+        logger.save('premask_nonoise', data4D_noisy, time_tag = False)
         data4D_noisy[..., PACBED_mask == 0] = 0
         data4D_nonoise[..., PACBED_mask == 0] = 0
 
     print(f'data4D_noisy.shape:{data4D_noisy.shape}')
     print(f'data4D_nonoise.shape:{data4D_nonoise.shape}')
     
-    logger.log_single('noisy', data4D_noisy, time_tag = False)
-    logger.log_single('nonoise', data4D_nonoise, time_tag = False)
+    logger.save('noisy', data4D_noisy, time_tag = False)
+    logger.save('nonoise', data4D_nonoise, time_tag = False)
     if data4D_noisy_diffused is not None:
         if problem_PACBED_mask:
             data4D_noisy_diffused[..., PACBED_mask == 0] = 0
-        logger.log_single('data4D_noisy_diffused', 
+        logger.save('data4D_noisy_diffused', 
                           data4D_noisy_diffused, time_tag = False)
 
     STEM, PACBED = mcemtools.sum_4D(data4D_noisy)
@@ -347,9 +332,19 @@ def make_problem(FLAG_make_problem,
     logger.log_imshow(
         'nonoise_CoM',com_x + 1j * com_y, cmap = 'complex', time_tag = False)
     
+    n_patts = np.minimum(data4D_nonoise.shape[0], 32)
+    mch = mcemtools.data4D_to_frame(
+        data4D_nonoise[:n_patts, :n_patts])
+    logger.imshow('canvas_nonoise', mch, dpi = 4000, time_tag =False)
+        
+    mch = mcemtools.data4D_to_frame(
+        data4D_noisy[:n_patts, :n_patts])
+    logger.imshow('canvas_noisy', mch, dpi = 4000, time_tag =False)
+
     #This must be the last thing this function does  
-    return logger.log_single(
+    return logger.save(
         'data4D_shape.npy', np.array(data4D_noisy.shape),time_tag = False)
+    
     
 def get_problem_settings(problem_args):
     ref_dir = problem_args.ref_dir
@@ -388,25 +383,25 @@ def get_problem_settings(problem_args):
         denoise_amp_angle = True,
         )
     
-    n_refine_steps = 2
+    n_refine_steps = 5
     hyps_I4D = Dict(
         n_prob = 3,                                     ###
         learning_rate = problem_args.learning_rate,     ####
-        learning_momentum = 1e-4,                       #
+        learning_momentum = 1e-5,                       #
         mbatch_size = problem_args.mbatch_size,         #
         n_epochs = 8,                                   ##
         n_segments = 1,                                 #                          
         n_kernels = problem_args.n_kernels,             #####
-        infer_size_I4D = 50,                            #
-        PAC_loss_factor = 0.015,                        ##
-        mSTME_loss_factor = 0.005,                      ##
+        infer_size_I4D = 5,                            #
+        PAC_loss_factor = 0.0,                          ##
+        mSTME_loss_factor = 0.0,                        ##
         n_refine_steps = n_refine_steps,
         n_ksweeps = 4,
         n_ksweeps_last = 4,
-        learning_rate_decay = 0.1**(1/(n_refine_steps - 1)),
-        learning_momentum_decay = 0.1**(1/(n_refine_steps - 1)),
-        refine_by_labels = False,
-        reset_on_refine = True,
+        learning_rate_decay = 1,#0.1**(1/(n_refine_steps - 1)) if n_refine_steps > 1 else 1,
+        learning_momentum_decay = 1,#0.1**(1/(n_refine_steps - 1)) if n_refine_steps > 1 else 1,
+        refine_by_labels = True,
+        reset_on_refine = False,
         test_mode = False,
         use_mu_eaxct = False,
         )
@@ -481,17 +476,17 @@ def get_problem_settings(problem_args):
         trainable_area_I4D    = trainable_area_I4D,
         PACBED_mask           = PACBED_mask,
         denoise_STEM_mask     = denoise_STEM_mask,
-        repeat_by_scattering  = [2, 1],
-        n_canvas_patterns     = 33,
+        repeat_by_scattering  = [1, 1],
+        n_canvas_patterns     = 17,
         )
 
     return problem_settings
 
 if __name__ == '__main__':
 
-    data_dir = r'./../mcemtools_data/SrTiO3/elec_True_mag_False_ps_1.00_th_240_app_19_df_50.0'
-    logged_data = logviewer(log_dir = data_dir)
-    logs_root = pathlib.Path(r'./../mcemtools_logs/STO_16eA')
+    data_dir = r'./../mcemtools_data/SrTiO3_16epA2/elec_True_mag_False_ps_0.98_th_240_app_19_df_50.0'
+    logged_data = lognflow(log_dir= data_dir)
+    logs_root = pathlib.Path(r'./../mcemtools_logs/STO_16eA_df_n50')
     
     exp_flist = []
     material_name_list = []
@@ -524,19 +519,20 @@ if __name__ == '__main__':
     #### files paths and general settings ######################################
     model_type                = 'UNET' # 'UNET' or 'TSVD'
     nn_init_try_max           = 5
-    Ne_list                   = [1600]#16, 32, 64, 128, 256, 512]
-    n_probes_list             = [32]
-    n_kernels_list            = [16]#2, 4, 8, 16, 32, 64, 128]
+    Ne_list                   = [16]#16, 32, 64, 128, 256, 512]
+    n_probes_list             = [256]
+    n_kernels_list            = [64]#2, 4, 8, 16, 32, 64, 128]
     denoiser_progress_list    = np.arange(1)/1
     learning_rate_list        = [1e-3]
-    mbatch_size_list          = [2]
-    noise_seed_list           = [0]
+    mbatch_size_list          = [8]
+    noise_seed_list           = [4]
     FLAG_make_problem         = False
     log_exist_ok              = True
     FLAG_train_I4D            = True
     use_classes_by_scattering = True
     use_repeat_by_scattering  = True
     log_denoised_every_sweep  = False
+    CFG_exit_after_making_problem = False
 
     STEM_denoiser_model_type  = 'UNET' # 'UNET' or 'TSVD'
     FLAG_train_STEM           = False
@@ -556,8 +552,8 @@ if __name__ == '__main__':
         rank_info = Dict(n_x = 28, n_y = 28, n_pix = 40)
     if model_type == 'TSVD':
         denoiser_progress_list = [0.0]
-        rank_info = Dict(n_x =   [56], #list(range(10, 41, 5)), 
-                         n_y =   [56], #list(range(10, 31, 5)), 
+        rank_info = Dict(n_x =   [16], #list(range(10, 41, 5)), 
+                         n_y =   [16], #list(range(10, 31, 5)), 
                          n_pix = [64], #list(range(10, 80, 10))
                          )
     else:
@@ -566,7 +562,7 @@ if __name__ == '__main__':
     if(0):  # to start from a denprog
         
         exp_dir = logs_root / r'SrTiO3_pyms_n_01_ps_0.15_df_0.0_117A_app_21.4_Ne_8'
-        logged_done = logviewer(exp_dir)
+        logged_done = lognflow(log_dir=exp_dir)
         ref_nonoise_fpath = logged_done.get_flist('integ_0.0/ref/nonoise.npy')[-1]
         ref_noisy_fpath =  logged_done.get_flist('integ_0.0/ref/noisy.npy')[-1]
         integ_cnt = 0
@@ -660,19 +656,19 @@ if __name__ == '__main__':
                                         log_exist_ok            = log_exist_ok)
                                     
                                     more_settings = Dict(
-                                        denoise_STEM_for_I4D      = denoise_STEM_for_I4D,
-                                        log_denoised_every_sweep  = log_denoised_every_sweep,
-                                        criterion_I4D_LAGMUL      = criterion_I4D_LAGMUL,
-                                        use_classes_by_scattering = use_classes_by_scattering,
-                                        use_repeat_by_scattering  = use_repeat_by_scattering,
-                                        use_pre_denoised_STEM     = use_pre_denoised_STEM,
-                                        STEM_denoiser_model_type  = STEM_denoiser_model_type,
-                                        rank_info                 = rank_info,
-                                        FLAG_train_CoM            = FLAG_train_CoM,      
-                                        use_pre_denoised_CoM      = use_pre_denoised_CoM,
-                                        FLAG_denoise_CoM          = FLAG_denoise_CoM,
-                                        denoise_CoM_for_I4D       = denoise_CoM_for_I4D,
-                                        CoM_denoiser_model_type   = CoM_denoiser_model_type,
+                                        denoise_STEM_for_I4D        = denoise_STEM_for_I4D,
+                                        log_denoised_every_sweep    = log_denoised_every_sweep,
+                                        criterion_I4D_LAGMUL        = criterion_I4D_LAGMUL,
+                                        use_classes_by_scattering   = use_classes_by_scattering,
+                                        use_repeat_by_scattering    = use_repeat_by_scattering,
+                                        use_pre_denoised_STEM       = use_pre_denoised_STEM,
+                                        STEM_denoiser_model_type    = STEM_denoiser_model_type,
+                                        rank_info                   = rank_info,
+                                        FLAG_train_CoM              = FLAG_train_CoM,      
+                                        use_pre_denoised_CoM        = use_pre_denoised_CoM,
+                                        FLAG_denoise_CoM            = FLAG_denoise_CoM,
+                                        denoise_CoM_for_I4D         = denoise_CoM_for_I4D,
+                                        CoM_denoiser_model_type     = CoM_denoiser_model_type,
                                         )
         
                                     nn_init_try_cnt = 0
@@ -682,12 +678,15 @@ if __name__ == '__main__':
                                                      exp_nonoise_fpath,
                                                      ref_dir, 
                                                      problem_args)
+                                        if CFG_exit_after_making_problem:
+                                            print('exit_after_making_problem')
+                                            exit()
                                         problem_settings = get_problem_settings(
                                             problem_args = problem_args,
                                             )
                                         try:
                                             if(model_type == 'UNET'):
-                                                exp_dir = mcemtools.denoise4net(
+                                                exp_dir = mcemtools.denoise4_unet(
                                                     **experiment_settings,
                                                     **problem_settings,
                                                     **more_settings)
@@ -708,7 +707,7 @@ if __name__ == '__main__':
                                             if(model_type == 'TSVD'):
                                                 raise e
                                     assert exp_dir.is_dir(), f'failed exp: {exp_name}'
-                                    logged_done = logviewer(exp_dir)
+                                    logged_done = lognflow(log_dir=exp_dir)
                                     ref_denoised_fpath = logged_done.get_flist(
                                         'I4D_denoiser/I4D_denoised/denoised*.npy')[-1]
                                     assert ref_denoised_fpath.is_file()

@@ -133,3 +133,9 @@ History
 0.9.6 (2024-08-27)
 -------------------
 * More concerete example is added for geometric flow based denoising for the paper
+
+0.9.7 (2024-09-30)
+-------------------
+* Annular mask fixed
+* added supervised 2D denoiser
+* renamed denoise4net to denoise4_unet

@@ -4,18 +4,18 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.9.6'
+__version__ = '0.9.7'
 
 from .mcemtools import viewer_4D, nvidia_smi_line
 
 from .analysis   import (cross_correlation_4D,
-                       SymmSTEM,
-                       centre_of_mass_4D,
-                       sum_4D,
-                       locate_atoms,
-                       bin_image,
-                       bin_4D,
-                       normalize_4D)
+                         SymmSTEM,
+                         centre_of_mass_4D,
+                         sum_4D,
+                         locate_atoms,
+                         bin_image,
+                         bin_4D,
+                         normalize_4D)
 
 from .masking import (annular_mask,
                       image_by_windows,
@@ -40,7 +40,8 @@ from .data import (open_muSTEM_binary,
                    feature_maker_4D,
                    )
 
-from .denoise.denoise4_tsvd     import denoise4_tsvd
-from .denoise.denoise4net       import denoise4net
-from .denoise.cluster4net       import cluster4net
-from .denoise.DATOS             import DATOS, nn_from_torch
+from .denoise.denoise4_tsvd    import denoise4_tsvd
+from .denoise.denoise4_unet    import denoise4_unet
+from .denoise.denoise4_tk_r_em import tk_r_em
+from .denoise.cluster4_unet    import cluster4_unet
+from .denoise.DATOS            import DATOS, nn_from_torch

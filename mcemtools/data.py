@@ -442,28 +442,35 @@ class segmented_to_4D:
     
         return w_BF, w_DF, mask2d
     
-    def get_stat(self, weights = None):
+    def get_stat(self, weights = None, normalize_for_com = True):
         data_per_ch, det_geo = self.channel_based_data , self.detector_geometry
         if weights is None:
             weights = np.ones(self.n_ch)
+
+        stem = (data_per_ch * weights[
+            :, np.newaxis, np.newaxis]).sum(0) / weights.sum()
         
-        cent_x, cent_y = det_geo.shape[0]//2, det_geo.shape[1]//2
         pacbed = np.zeros(det_geo.shape)
+        for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
+            pacbed[det_geo == label] += data_per_ch[cnt].mean() * weights[cnt]
+        pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
+
+        data_per_ch = data_per_ch.copy()
+        if normalize_for_com:
+            data_per_ch_sum = np.expand_dims(data_per_ch.sum(0), 0)
+            data_per_ch_sum = np.tile(data_per_ch_sum, (data_per_ch.shape[0], 1, 1))
+            data_per_ch[data_per_ch_sum != 0] /= data_per_ch_sum[data_per_ch_sum != 0]
+            data_per_ch[data_per_ch_sum == 0] = 0
+
+        cent_x, cent_y = det_geo.shape[0]//2, det_geo.shape[1]//2
         com_x_ch = np.zeros(data_per_ch.shape)
         com_y_ch = np.zeros(data_per_ch.shape)
         for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
-            pacbed[det_geo == label] += data_per_ch[cnt].mean() * weights[cnt]
             mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_geo == label)
             com_x_ch[cnt] = data_per_ch[cnt]*(mask_com_x - cent_x)
             com_y_ch[cnt] = data_per_ch[cnt]*(mask_com_y - cent_y)
-        
-        pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
-        
         com_x = (com_x_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
         com_y = (com_y_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
-        
-        stem = (data_per_ch * weights[
-            :, np.newaxis, np.newaxis]).sum(0) / weights.sum()
 
         return stem, pacbed, com_x, com_y, pacbed_com_x, pacbed_com_y
     

@@ -6,7 +6,7 @@ from lognflow import lognflow, logviewer
 
 import mcemtools
 
-def denoise4_tsvd(
+def tk_r_em(
     logs_root, 
     exp_name,
     ref_dir,
@@ -103,51 +103,11 @@ def denoise4_tsvd(
     
     logger(f'data4D_noisy.mean() : {data4D_noisy.mean()}')
     logger(f'data4D_nonoise.mean() : {data4D_nonoise.mean()}')
-    logger(f'rank_info: {rank_info}')
-    
-    # from mcemtools.tensor_svd import scree_plots
-    # screes = scree_plots(data4D_noisy.reshape(data4D_noisy.shape[0],data4D_noisy.shape[1],data4D_noisy.shape[2]*data4D_noisy.shape[3]))
-    # plt.plot(screes[0], '-*', label = 'x direction')
-    # plt.plot(screes[1], '-*', label = 'y direction')
-    # plt.plot(screes[2], '-*', label = 'pixels')
-    # plt.legend()
-    # logger.log_plt('screes', dpi = 1000)
-    #
-    # logger.log_single('screes_0', screes[0])
-    # logger.log_single('screes_1', screes[1])
-    # logger.log_single('screes_2', screes[2])
-    #
-    # err_all = []
-    # _nx_ny_npix_all = []
-    # for _n_x in rank_info.n_x:
-    #     for _n_y in rank_info.n_y:
-    #         for _n_pix in rank_info.n_pix:
-    #             print(f'{_n_x}/{rank_info.n_x[-1]}',
-    #                   f'{_n_y}/{rank_info.n_y[-1]}',
-    #                   f'{_n_pix}/{rank_info.n_pix[-1]}')
-    #             denoised = mcemtools.tensor_svd.tensor_svd_denoise(
-    #                 data4D_noisy, rank = (_n_x, _n_y, _n_pix))
-    #             denoised = denoised.reshape(*data4D_noisy_shape)
-    #             current_Err = ((denoised - data4D_nonoise)**2).mean()**0.5
-    #             err_all.append(current_Err)
-    #             _nx_ny_npix_all.append([_n_x, _n_y, _n_pix])
-    # err_all = np.array(err_all)
-    # logger(f'ranks are: {rank_info.n_pix}')
-    # logger(f'errors vs ranks are: {err_all}')
-    # ind = np.argmin(err_all)
-    # logger(f'best rank is {ind}: {_nx_ny_npix_all[ind]}')
-    # _n_x, _n_y, _n_pix = _nx_ny_npix_all[ind]
-    #
-    # denoised = mcemtools.tensor_svd.tensor_svd_denoise(
-    #         data4D_noisy, rank = (_n_x, _n_y, _n_pix))
-    # denoised = denoised.reshape(*data4D_noisy_shape)
+    logger(f'rank_info - model name: {rank_info}')
     
     from tk_r_em import load_network, load_sim_test_data
 
-    net_name_list = ['sfr_hrsem', 'sfr_lrsem', 'sfr_hrstem', 
-        'sfr_lrstem', 'sfr_hrtem', 'sfr_lrtem']
-    
-    r_em_nn = load_network(net_name_list[0])
+    r_em_nn = load_network(rank_info)
     r_em_nn.summary()
     data4D_noisy = data4D_noisy.swapaxes(1,2).swapaxes(2,3).swapaxes(0,1).swapaxes(1,2)
     data4D_noisy = data4D_noisy.reshape(n_r * n_c, n_x, n_y)

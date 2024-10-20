@@ -41,18 +41,23 @@ def annular_mask(image_shape : tuple,
     n_r, n_c = image_shape
     if centre is None: # use the middle of the image
         # centre = (int(n_r/2), int(n_c/2))
-        centre = (n_r/2, n_c/2)
-    if radius is None: 
-        # use the smallest distance between the centre and image walls
-        radius = np.inf
+        centre = [n_r/2, n_c/2]
 
-    Y, X = np.ogrid[:n_r, :n_c]
+    Y, X = np.ogrid[:n_c, :n_r]
     
     if n_r/2 == n_r//2:
         Y = Y + 0.49
+    else:
+        centre[1] = centre[1] - 0.5
     if n_c/2 == n_c//2:
         X = X + 0.49
+    else:
+        centre[0] = centre[0] - 0.5
     
+    if radius is None: 
+        # use the smallest distance between the centre and image walls
+        radius = np.floor(np.minimum(*centre))
+
     dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 
     mask = dist_from_centre <= radius
@@ -62,7 +67,14 @@ def annular_mask(image_shape : tuple,
 
     return mask.astype('uint8') 
 
-def crop_or_pad(data, new_shape, padding_value = 0):
+def is_torch(data):
+    try:
+        _ = data.is_cuda
+        return True
+    except AttributeError:
+        return False
+
+def crop_or_pad(data, new_shape, padding_value = 0, shift = None):
     """shape data to have the new shape new_shape
     Parameters
     ----------
@@ -77,27 +89,45 @@ def crop_or_pad(data, new_shape, padding_value = 0):
             if bigger, a will be put in the middle of padded zeros.
     """
     data_shape = data.shape
-    
+    data_is_torch = is_torch(data)
     assert len(data_shape) == len(new_shape), \
-        'put np.ndarray a in b, the length of their shapes should be the same.'
-    
+        'put np.ndarray a in b, the length of their shapes should be the same.' \
+        f'currently, data shape is {data_shape} and new shape is {new_shape}'
+
+    if shift is not None:
+        assert len(shift) == len(data_shape)
+    else:
+        shift = np.zeros(len(data_shape))
+
     for dim in range(len(data_shape)):
         if data_shape[dim] != new_shape[dim]:
-            data = data.swapaxes(0, dim)
-            start = int((data_shape[dim] - new_shape[dim])/2)
-            finish = int((data_shape[dim] + new_shape[dim])/2)
-            pad_left = -int((data_shape[dim] - new_shape[dim])/2)
-            pad_right = int(np.ceil((new_shape[dim] - data_shape[dim])/2))
+            if data_is_torch:
+                data = data.transpose(0, dim)
+            else:
+                data = data.swapaxes(0, dim)
+                
             if data_shape[dim] > new_shape[dim]:
+                start = int((data_shape[dim] - new_shape[dim])/2) + shift[dim]
+                finish = int((data_shape[dim] + new_shape[dim])/2) + shift[dim]
                 data = data[start : finish]
             elif data_shape[dim] < new_shape[dim]:
-                data = np.vstack(
-                    (padding_value + np.zeros(((pad_left, ) + data.shape[1:]),
-                                      dtype=data.dtype),
-                     data,
-                     padding_value + np.zeros(((pad_right, ) + data.shape[1:]),
-                                      dtype=data.dtype)))
-            data = data.swapaxes(0, dim)
+                pad_left = -int((data_shape[dim] - new_shape[dim])/2)  - shift[dim]
+                pad_right = int(np.ceil((new_shape[dim] - data_shape[dim])/2)) + shift[dim]
+                if data_is_torch:
+                    pad_left_tensor = padding_value + torch.zeros((pad_left,) + data.shape[1:], dtype=data.dtype, device=data.device)
+                    pad_right_tensor = padding_value + torch.zeros((pad_right,) + data.shape[1:], dtype=data.dtype, device=data.device)
+                    data = torch.cat((pad_left_tensor, data, pad_right_tensor), dim=0)
+                else:
+                    data = np.vstack(
+                        (padding_value + np.zeros(((pad_left, ) + data.shape[1:]),
+                                          dtype=data.dtype),
+                         data,
+                         padding_value + np.zeros(((pad_right, ) + data.shape[1:]),
+                                          dtype=data.dtype)))
+            if data_is_torch:
+                data = data.transpose(0, dim)
+            else:
+                data = data.swapaxes(0, dim)
     return data
 
 class image_by_windows:

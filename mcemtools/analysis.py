@@ -2,8 +2,97 @@ import numpy as np
 from .masking import annular_mask, mask2D_to_4D, image_by_windows
 from lognflow import printprogress, lognflow
 from skimage.transform import warp_polar
+import scipy
 from itertools import product
 import torch
+
+def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
+    """
+    Generate a 2D Gaussian kernel with specified parameters.
+    
+    Parameters:
+    -----------
+    filter_size : int
+        Size of the kernel (square grid).
+    s1 : float, optional
+        Standard deviation along the first axis. Default is 1.
+    s2 : float, optional
+        Standard deviation along the second axis. Default is 1.
+    angle : float, optional
+        Rotation angle (in degrees) for the kernel. Default is 0.
+    
+    Returns:
+    --------
+    kern2d : ndarray
+        Normalized 2D Gaussian kernel.
+    """
+    # Define the covariance matrix
+    cov_matrix = np.array([[s1**2,   0  ], 
+                           [  0  , s2**2]])
+    
+    # Rotation matrix
+    theta = np.deg2rad(angle)
+    R = np.array([[np.cos(theta), -np.sin(theta)], 
+                  [np.sin(theta),  np.cos(theta)]])
+    
+    # Rotate the covariance matrix
+    cov_matrix_rotated = R @ cov_matrix @ R.T
+    
+    # Create meshgrid
+    lim = filter_size // 2 + (filter_size % 2) / 2
+    x = np.linspace(-lim, lim, filter_size)
+    y = np.linspace(-lim, lim, filter_size)
+    X, Y = np.meshgrid(x, y)
+    
+    # Create the Gaussian kernel
+    pos = np.dstack((X, Y))
+    rv = scipy.stats.multivariate_normal([0, 0], cov_matrix_rotated)
+    kern2d = rv.pdf(pos)
+    
+    return kern2d / kern2d.sum()
+
+def spatial_incoherence_4D(data4d, spatInc_params):
+    """
+    Apply spatial incoherence using a Gaussian filter on 4D-STEM data.
+    
+    Parameters:
+    -----------
+    data4d : ndarray
+        4D dataset (n_x, n_y, n_r, n_c) to apply the filtering.
+    spatInc_params : dict
+        Dictionary of parameters for the Gaussian filter. Should include:
+        - 'filter_size': int
+        - 's1': float, optional
+        - 's2': float, optional
+        - 'angle': float, optional
+    
+    Returns:
+    --------
+    filtered_data4d : ndarray
+        Filtered 4D-STEM data with applied spatial incoherence.
+    """
+    # Generate Gaussian filter based on given parameters
+    gaussian_filter = Gaussian_2dkernel(**spatInc_params).astype('float32')
+    
+    # Get dimensions of the 4D data
+    n_x, n_y, n_r, n_c = data4d.shape
+    
+    # Fourier transform of the 4D data
+    data4d_ft = scipy.fft.fftn(data4d, axes=(0, 1))
+    
+    # Fourier transform of the Gaussian filter
+    filter_ft = scipy.fft.fftn(gaussian_filter, s=(n_x, n_y))
+    
+    # Tile the filter across the 4D data dimensions
+    filter_ft_tiled = np.tile(filter_ft[:, :, np.newaxis, np.newaxis], (1, 1, n_r, n_c))
+    
+    # Apply the filter in Fourier space
+    result_ft = data4d_ft * filter_ft_tiled
+    
+    # Inverse Fourier transform to get the filtered data
+    filtered_data4d = scipy.fft.ifftn(result_ft, axes=(0, 1)).real
+
+    return filtered_data4d
 
 def normalize_4D(data4D, weights4D = None, method = 'loop'):
     """
@@ -411,7 +500,15 @@ def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
             f'mask4D with shape {mask4D.shape} should have '\
             + f'the same shape as data4D with shape {data4D.shape}.'
     
-    clm_grid, row_grid = np.meshgrid(np.arange(n_c), np.arange(n_r))
+    data4D = data4D.copy()
+    stem = data4D.mean((2, 3))
+    stem = np.expand_dims(np.expand_dims(stem, -1), -1)
+    stem = np.tile(stem, (1, 1, n_r, n_c))
+    data4D[stem != 0] /= stem[stem != 0]
+    data4D[stem == 0] = 0
+    
+    clm_grid, row_grid = np.meshgrid(np.arange(-n_c//2, n_c//2),
+                                     np.arange(-n_r//2, n_r//2))
     row_grid_cube      = np.tile(row_grid,   (n_x, n_y, 1, 1))
     clm_grid_cube      = np.tile(clm_grid,   (n_x, n_y, 1, 1))
     
@@ -564,6 +661,9 @@ def stem_image_nyquist_interpolation(
         
         alpha = probe-forming aperture semiangle in mrad 
         Knought = vacuum wavevector (in inverse Angstrom)
+        
+        \\lambda_0 = \frac{h}{\sqrt{2 m_e e V \left( 1 + \frac{e V}{2 m_e c^2} \right)}}
+        K_0 = \frac{2pi}{\\lambda_0}
         
         npixout,npiyout give number of pixels in x and y for output
     """

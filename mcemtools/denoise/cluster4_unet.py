@@ -4,7 +4,8 @@ import numpy as np
 import scipy.ndimage
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
-from lognflow import lognflow, logviewer, printprogress, plt_colorbar
+from lognflow.plt_utils import plt_colorbar
+from lognflow import lognflow, logviewer, printprogress
 
 import mcemtools
 
@@ -247,7 +248,7 @@ def train_I4D(
         torch_handler_I4D.torchModel.PACBED.detach().cpu().numpy())
     return fpath, perv_loss
 
-def cluster4net(
+def cluster4_unet(
     logs_root, 
     exp_name,
     ref_dir,
@@ -685,7 +686,7 @@ def cluster4net(
         
     logger.log_single('I4D_denoiser/I4D_denoised/denoised', data4D_noisy_new)
     
-    logger('--\|/'*16)
+    logger(r'--\|/'*16)
     logger_dir = logger.log_dir
     
     del logger
