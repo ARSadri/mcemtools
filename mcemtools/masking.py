@@ -97,7 +97,7 @@ def crop_or_pad(data, new_shape, padding_value = 0, shift = None):
     if shift is not None:
         assert len(shift) == len(data_shape)
     else:
-        shift = np.zeros(len(data_shape))
+        shift = np.zeros(len(data_shape), dtype='int')
 
     for dim in range(len(data_shape)):
         if data_shape[dim] != new_shape[dim]:

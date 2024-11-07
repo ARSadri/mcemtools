@@ -265,9 +265,11 @@ class nn_from_torch:
                 g['momentum'] = momentum
     
     def reset(self):
-        for layer in self.torchModel.children():
-           if hasattr(layer, 'reset_parameters'):
-               layer.reset_parameters()
+        try:
+            self.torchModel.reset()
+        except Exception as e:
+            print('Trying to reset the model.')
+            print(e)
     
     def load_parameters(self, fpath):
         self.torchModel.load_state_dict(torch.load(fpath), strict=False)
@@ -312,7 +314,7 @@ class nn_from_torch:
                    show_progress = False,
                    predictions_statfunc_list = None):
         with torch.no_grad():
-            self.torchModel.eval()
+            # self.torchModel.eval()
             if infer_size is None:
                 if self.infer_size is None:
                     pt_stop = 1
@@ -346,10 +348,11 @@ class nn_from_torch:
                                 self.lossFunc.accumulated_PACBED, \
                                     self.lossFunc.accumulated_n_images, \
                                     self.lossFunc.accumulated_mSTEM, \
-                                    self.lossFunc.mSTEM_loss_factor = (attrs_to_restore[0] - 1,
-                                                              attrs_to_restore[1] - 1,
-                                                              attrs_to_restore[2] - 1,
-                                                              attrs_to_restore[3] - 1)                           
+                                    self.lossFunc.mSTEM_loss_factor = (
+                                        attrs_to_restore[0] - 1,
+                                        attrs_to_restore[1] - 1,
+                                        attrs_to_restore[2] - 1,
+                                        attrs_to_restore[3] - 1)                           
                             else:
                                 loss = self.lossFunc(preds, labels, indices[:pt_stop])
                                 
@@ -428,7 +431,6 @@ class nn_from_torch:
                         except Exception as e:
                             self.logger(DATOS_OUT_OF_MEMORY_MSG.format(
                                     predictions_shape = predictions_shape))
-                            self.torchModel.train()
                             raise e
                 if(return_predictions):
                     predictions[pt_start:pt_stop] = preds.copy()
@@ -455,7 +457,7 @@ class nn_from_torch:
                     pbar(pt_stop - pt_start)
                 pt_start = pt_stop
         torch.cuda.empty_cache()
-        self.torchModel.train()
+        # self.torchModel.train()
         return(losses, predictions_stat_list, predictions)
 
 if __name__ == '__main__':

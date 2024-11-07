@@ -572,7 +572,7 @@ def cluster4_unet(
         noisy_PACBED = torch.from_numpy(noisy_PACBED_loss).float().to(device),
         noisy_mSTEM = torch.from_numpy(noisy_STEM_loss.ravel()).float().to(device),
         PAC_loss_factor = hyps_I4D['PAC_loss_factor'],
-        mSTEM_loss_factor = hyps_I4D['mSTME_loss_factor'],
+        mSTEM_loss_factor = hyps_I4D['mSTEM_loss_factor'],
         )
 
     torch_handler_I4D = nn_from_torch(

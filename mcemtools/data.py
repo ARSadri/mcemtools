@@ -494,3 +494,68 @@ class segmented_to_4D:
         filtered_com_y = filtered_com_y[coords_max:-coords_max, coords_max:-coords_max]
 
         return filtered_com_x, filtered_com_y, kernel
+    
+def apply_segment_sums(img, det_geo, return_by_channle = False):
+    """
+    Replace values in a multi-dimensional image based on a segmented labeled image.
+    
+    Parameters:
+    ----------
+    img : np.ndarray
+        The multi-dimensional image array with shape (n_x, n_y, n_r, n_c),
+        where each (n_r, n_c) slice is a single image.
+    det_geo : np.ndarray
+        The labeled segmentation image with the same shape as img[-2:].
+        The area around the detector should be set to 0, and each segment
+        should be labeled with a channel number from 1 to 12.
+
+    Returns:
+    -------
+    np.ndarray
+        The modified image with each segment's values replaced by their sums.
+
+    Raises:
+    ------
+    ValueError
+        If det_geo does not match the last two dimensions of img.
+    
+    Notes:
+    ------
+    This function sums the values in each segment of img, defined by det_geo.
+    Each segment (where det_geo == i) is replaced by the segment's sum in the
+    modified img.
+    """
+    # Validate that det_geo matches the last two dimensions of img
+    if det_geo.shape != img.shape[-2:]:
+        raise ValueError("The shape of det_geo must match the last two dimensions of img.")
+
+    # Copy img to avoid modifying the original image
+    
+    if return_by_channle:
+        data_by_ch = np.zeros(
+            (img.shape[0], img.shape[1], len(np.unique(det_geo)) - 1), 
+            dtype = img.dtype)
+    else:
+        modified_img = img.copy()
+    # Iterate through each image slice (n_r, n_c)
+    for i in range(img.shape[0]):
+        for j in range(img.shape[1]):
+            # For each unique label, sum values in img and replace within the segment
+            for label in np.unique(det_geo):
+                if label == 0:
+                    continue  # Skip the area around the detector
+
+                # Calculate the sum of values within the current segment
+                segment_sum = img[i, j][det_geo == label].sum()
+                
+                # Assign the sum to the segment in the modified image
+                
+                if return_by_channle:
+                    data_by_ch[i, j][label - 1] = segment_sum
+                else:
+                    modified_img[i, j][det_geo == label] = segment_sum
+
+    if return_by_channle:
+        return data_by_ch
+    else:
+        return modified_img

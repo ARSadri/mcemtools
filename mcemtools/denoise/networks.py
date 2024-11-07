@@ -165,7 +165,16 @@ class U_Net(nn.Module):
         self.mu_eaxct = None
         self.mu = None
         self.PACBED = None
-        
+    
+    def reset(self):
+        for layer in self.children():
+           if hasattr(layer, 'reset_parameters'):
+               layer.reset_parameters()
+        self.mask = self.mask
+        self.mu_eaxct = None
+        self.mu = None
+        self.PACBED = None
+    
     def forward(self,x, inds = None):
         x1 = self.Conv1(x)
         
@@ -210,7 +219,7 @@ class U_Net(nn.Module):
                 d1[dim] *= self.mu_eaxct[inds[dim]]
             elif(self.mu is not None):
                 d1[dim] *= self.mu[inds[dim]]
-
+                
         if(self.mask is not None):
             d1[:, :, self.mask==0] = 0 
         

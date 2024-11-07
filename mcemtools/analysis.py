@@ -473,6 +473,28 @@ def CoM_torch(data4D, mask4D = None, normalize = True,
 
     return CoMx.float(), CoMy.float(), row_grid_cube, clm_grid_cube
 
+def CoM_detector(det_geo):
+    cent_x, cent_y = scipy.ndimage.center_of_mass(det_geo > 0)
+    mask_coms = []
+    for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
+        mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_geo == label)
+        mask_com_x -= cent_x
+        mask_com_y -= cent_y
+        mask_coms.append([mask_com_x, mask_com_y])
+    return np.array(mask_coms)
+
+def CoM_channel_torch(data_per_ch, mask_coms):
+    com_x_ch = []
+    com_y_ch = []
+    for cnt, mask_com in enumerate(mask_coms):
+        com_x_ch.append(data_per_ch[:, cnt] * mask_com[0])
+        com_y_ch.append(data_per_ch[:, cnt] * mask_com[1])
+    com_x_ch = torch.cat(
+        [_.unsqueeze(-1) for _ in com_x_ch], axis = 1).mean(1, dtype=torch.float32)
+    com_y_ch = torch.cat(
+        [_.unsqueeze(-1) for _ in com_y_ch], axis = 1).mean(1, dtype=torch.float32)
+    return com_x_ch, com_y_ch
+
 def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
     """ modified from py4DSTEM
     
@@ -724,3 +746,26 @@ def force_stem_4d(a4d, b4d):
     a4d[stem != 0] *= stem[stem != 0]
     a4d[stem == 0] = 0
     return a4d
+
+def compute_pixel_histograms(images, bins=np.arange(10)):
+    """
+    Compute histograms for each pixel position across a stack of images.
+    
+    Parameters:
+    - images: np.ndarray of shape (N, M, M), where N is the number of images and M x M is the image size.
+    - bins: np.ndarray, the bin edges to use for histogram calculation.
+    
+    Returns:
+    - histograms: np.ndarray of shape (len(bins)-1, M, M), where each slice corresponds to a bin count per pixel.
+    """
+    num_bins = len(bins) - 1
+    N, M, _ = images.shape
+    
+    histograms = np.zeros((num_bins, M, M), dtype=int)
+    
+    binned = np.digitize(images, bins=bins) - 1
+
+    for b in range(num_bins):
+        histograms[b] = np.sum(binned == b, axis=0)
+
+    return histograms

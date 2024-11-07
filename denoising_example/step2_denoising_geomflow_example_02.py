@@ -394,7 +394,7 @@ def get_problem_settings(problem_args):
         n_kernels = problem_args.n_kernels,             #####
         infer_size_I4D = 5,                            #
         PAC_loss_factor = 0.0,                          ##
-        mSTME_loss_factor = 0.0,                        ##
+        mSTEM_loss_factor = 0.0,                        ##
         n_refine_steps = n_refine_steps,
         n_ksweeps = 4,
         n_ksweeps_last = 4,
