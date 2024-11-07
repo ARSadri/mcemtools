@@ -121,21 +121,12 @@ History
 -------------------
 * minimal requirenments and test scripts for denoising is added
 * first denoising example added
-
-0.9.4 (2024-06-01)
--------------------
 * many bugs fixed for the denoiser
-
-0.9.4 (2024-06-01)
--------------------
-* ...
-
-0.9.6 (2024-08-27)
--------------------
 * More concerete example is added for geometric flow based denoising for the paper
 
-0.9.7 (2024-09-30)
+0.9.5 (2024-11-08)
 -------------------
 * Annular mask fixed
 * added supervised 2D denoiser
 * renamed denoise4net to denoise4_unet
+* simpler examples for denoising
