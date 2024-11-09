@@ -81,23 +81,22 @@ class DATOS:
                 f'fitting_errors are {fitting_errors.shape[0]} but must be {self.N}'
         next_in_line = 0
         adjacencies = None
-        match order:
-            case 'ascend':
-                sort_inds = np.argsort(fitting_errors)
-                if fit2Outliers:
-                    outlier_inline, adjacencies = \
-                        pyMSSE(fitting_errors[sort_inds].copy(), 
-                               MSSE_LAMBDA = 3, k = 12)
-                    next_in_line = outlier_inline + 1
-                    if(next_in_line > self.N - self.mbatch_size):
-                        next_in_line = self.N - self.mbatch_size
-            case 'descend':
-                sort_inds = np.argsort(fitting_errors)[::-1]
-            case 'random':
-                sort_inds = np.arange(self.N, dtype='int')
-                np.random.shuffle(sort_inds)
-            case _:
-                sort_inds = np.arange(self.N, dtype='int')
+        if order == 'ascend':
+            sort_inds = np.argsort(fitting_errors)
+            if fit2Outliers:
+                outlier_inline, adjacencies = \
+                    pyMSSE(fitting_errors[sort_inds].copy(), 
+                           MSSE_LAMBDA = 3, k = 12)
+                next_in_line = outlier_inline + 1
+                if(next_in_line > self.N - self.mbatch_size):
+                    next_in_line = self.N - self.mbatch_size
+        elif order == 'descend':
+            sort_inds = np.argsort(fitting_errors)[::-1]
+        elif order == 'random':
+            sort_inds = np.arange(self.N, dtype='int')
+            np.random.shuffle(sort_inds)
+        else:
+            sort_inds = np.arange(self.N, dtype='int')
         
         self.make_indices(sort_inds, next_in_line)
         return adjacencies

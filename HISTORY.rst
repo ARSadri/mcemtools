@@ -129,4 +129,9 @@ History
 * Annular mask fixed
 * added supervised 2D denoiser
 * renamed denoise4net to denoise4_unet
-* simpler examples for denoising
+* 
+
+
+0.9.6 (2024-11-08)
+-------------------
+* denoiser needed a fix

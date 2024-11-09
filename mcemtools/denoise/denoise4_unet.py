@@ -835,51 +835,60 @@ def denoise4_unet(
             logger.imshow('I4D_denoiser/com_xy/com',
                            com_x + 1j * com_y, cmap = 'real_imag')
             
-            data4D_noisy[edgew : -(edgew), edgew : -(edgew)] = \
-                data4D_denoised[edgew:-edgew, edgew:-edgew].copy()
+            data4D_denoised = data_gen_I4D.reconstruct4D(data4D_denoised)
+            logger(f'data4D_denoised: {data4D_denoised.shape}')
+            frame = mcemtools.data4D_to_frame(
+                data4D_denoised[edgew:n_show+edgew, edgew:n_show+edgew])
+            logger.imshow('I4D_denoiser/sample_denoised/denoised', frame)
+
+            com_x, com_y = mcemtools.centre_of_mass_4D(
+                data4D_denoised[edgew:-edgew, edgew:-edgew])
+            logger.imshow('I4D_denoiser/com_complex/com',
+                           com_x + 1j * com_y, cmap = 'complex')
+            logger.imshow('I4D_denoiser/com_xy/com',
+                           com_x + 1j * com_y, cmap = 'real_imag')
             
             noisy_STEM, noisy_PACBED  = mcemtools.sum_4D(
-                data4D_noisy[edgew:-edgew, edgew:-edgew])
+                data4D_denoised[edgew:-edgew, edgew:-edgew])
             Ne_estimated = noisy_STEM.mean()
             logger(f'estimated Ne per probe position: {Ne_estimated}')
             logger.imshow(
-                'I4D_denoiser/I4D_denoised_STEM/final_STEM_noisy', 
-                noisy_STEM)
+                'I4D_denoiser/I4D_denoised_STEM/final_STEM_noisy', noisy_STEM)
             logger.imshow(
-                'I4D_denoiser/I4D_denoised_PACBED/final_noisy_PACBED', 
-                noisy_PACBED)
-            
-            frm = mcemtools.data4D_to_frame(data4D_noisy.copy()[
-                edgew:n_canvas_patterns - edgew,
-                edgew:n_canvas_patterns - edgew])
-            logger.imshow(
-                'I4D_denoiser/canvas_denoised/denoised', frm, dpi = 4000)
+                'I4D_denoiser/I4D_denoised_PACBED/final_noisy_PACBED', noisy_PACBED)
             
             if not include_training:
                 break
         
-        logger('Making a diffused input dataset')
-        beta = refine_step/(len(refine_step_list) + 1)
-        logger(f'The combination weight is: {beta}')
-        
-        data4D_noisy_diffused = \
-            data4D_noisy * (1 - beta) + data4D_noisy * beta
-        data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
-        logger('labels are diffused too.')
-        data_gen_I4D.update(
-            data4D_noisy_diffused, update_label = hyps_I4D['refine_by_labels'])
-        
-        recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
-        frame = mcemtools.data4D_to_frame(recon[edgew:5+edgew, edgew:5+edgew])
-        logger.imshow('I4D_denoiser/sample/data4D_diffused', frame)
-        del data4D_noisy_diffused
-        logger('training dataset is modified with diffused input')
-        if(log_denoised_every_sweep):
-            logger.save(
-                'I4D_denoiser/I4D_denoised_inter/denoised', data4D_noisy)
+        if len(refine_step_list) > 1:
+            logger('Making a diffused input dataset')
+            beta = refine_step/(len(refine_step_list) + 1)
+            logger(f'The combination weight is: {beta}')
             
-        hyps_I4D['learning_rate'] *= hyps_I4D['learning_rate_decay']
-        hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
+            if(log_denoised_every_sweep):
+                logger.save('I4D_denoiser/I4D_denoised_inter/denoised', data4D_denoised)
+            
+            data4D_noisy_diffused = data4D_noisy.copy()
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= beta
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] += \
+                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * (1 - beta)
+            data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
+            data_gen_I4D.update(data4D_noisy_diffused, 
+                                update_label = hyps_I4D['refine_by_labels'])
+            
+            if hyps_I4D['refine_by_labels']:
+                logger('labels are diffused too.')
+                recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
+                frame = mcemtools.data4D_to_frame(
+                    recon[edgew:n_show+edgew, edgew:n_show+edgew])
+                logger.imshow('I4D_denoiser/sample/data4D_diffused', frame)
+            
+            logger('training dataset is modified with diffused input')
+            del data4D_noisy_diffused
+    
+            hyps_I4D['learning_rate'] *= hyps_I4D['learning_rate_decay']
+            hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
+            logger(hyps_I4D)
     
     logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_noisy)
     
@@ -1164,7 +1173,7 @@ def denoise4D_unet(
                           data_gen_I4D.reconstruct2D(ferrs))
 
             data4D_denoised = data_gen_I4D.reconstruct4D(data4D_denoised)
-            
+            logger(f'data4D_denoised: {data4D_denoised.shape}')
             frame = mcemtools.data4D_to_frame(
                 data4D_denoised[edgew:n_show+edgew, edgew:n_show+edgew])
             logger.imshow('I4D_denoiser/sample_denoised/denoised', frame)
@@ -1176,22 +1185,14 @@ def denoise4D_unet(
             logger.imshow('I4D_denoiser/com_xy/com',
                            com_x + 1j * com_y, cmap = 'real_imag')
             
-            data4D_noisy[edgew : -(edgew), edgew : -(edgew)] = \
-                data4D_denoised[edgew:-edgew, edgew:-edgew].copy()
-            
             noisy_STEM, noisy_PACBED  = mcemtools.sum_4D(
-                data4D_noisy[edgew:-edgew, edgew:-edgew])
+                data4D_denoised[edgew:-edgew, edgew:-edgew])
             Ne_estimated = noisy_STEM.mean()
             logger(f'estimated Ne per probe position: {Ne_estimated}')
             logger.imshow(
                 'I4D_denoiser/I4D_denoised_STEM/final_STEM_noisy', noisy_STEM)
             logger.imshow(
                 'I4D_denoiser/I4D_denoised_PACBED/final_noisy_PACBED', noisy_PACBED)
-            
-            frm = mcemtools.data4D_to_frame(
-                data4D_noisy[edgew:n_show - edgew, edgew:n_show - edgew])
-            logger.imshow(
-                'I4D_denoiser/canvas_denoised/denoised', frm, dpi = 4000)
             
             if not include_training:
                 break
@@ -1201,25 +1202,31 @@ def denoise4D_unet(
             beta = refine_step/(len(refine_step_list) + 1)
             logger(f'The combination weight is: {beta}')
             
-            data4D_noisy_diffused = \
-                data4D_noisy * (1 - beta) + data4D_noisy * beta
+            if(log_denoised_every_sweep):
+                logger.save('I4D_denoiser/I4D_denoised_inter/denoised', data4D_denoised)
+            
+            data4D_noisy_diffused = data4D_noisy.copy()
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= beta
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] += \
+                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * (1 - beta)
             data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
-            logger('labels are diffused too.')
             data_gen_I4D.update(data4D_noisy_diffused, 
                                 update_label = hyps_I4D['refine_by_labels'])
             
-            recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
-            frame = mcemtools.data4D_to_frame(
-                recon[edgew:n_show+edgew, edgew:n_show+edgew])
-            logger.imshow('I4D_denoiser/sample/data4D_diffused', frame)
-            del data4D_noisy_diffused
+            if hyps_I4D['refine_by_labels']:
+                logger('labels are diffused too.')
+                recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
+                frame = mcemtools.data4D_to_frame(
+                    recon[edgew:n_show+edgew, edgew:n_show+edgew])
+                logger.imshow('I4D_denoiser/sample/data4D_diffused', frame)
+            
             logger('training dataset is modified with diffused input')
-            if(log_denoised_every_sweep):
-                logger.save('I4D_denoiser/I4D_denoised_inter/denoised', data4D_noisy)
-                
+            del data4D_noisy_diffused
+    
             hyps_I4D['learning_rate'] *= hyps_I4D['learning_rate_decay']
             hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
-    
+            logger(hyps_I4D)
+            
     logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_noisy)
     
     frame_denoised = mcemtools.data4D_to_frame(data4D_noisy[
