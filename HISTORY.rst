@@ -129,9 +129,11 @@ History
 * Annular mask fixed
 * added supervised 2D denoiser
 * renamed denoise4net to denoise4_unet
-* 
-
 
 0.9.6 (2024-11-08)
 -------------------
 * denoiser needed a fix
+
+0.9.7 (2024-11-15)
+-------------------
+* critical bug fixed in applying spatial incoherence 

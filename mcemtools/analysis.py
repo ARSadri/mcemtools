@@ -5,6 +5,7 @@ from skimage.transform import warp_polar
 import scipy
 from itertools import product
 import torch
+import mcemtools
 
 def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
     """
@@ -51,7 +52,7 @@ def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
     
     return kern2d / kern2d.sum()
 
-def spatial_incoherence_4D(data4d, spatInc_params):
+def spatial_incoherence_4D(data4d, spatInc_params, use_fft = False):
     """
     Apply spatial incoherence using a Gaussian filter on 4D-STEM data.
     
@@ -65,32 +66,40 @@ def spatial_incoherence_4D(data4d, spatInc_params):
         - 's1': float, optional
         - 's2': float, optional
         - 'angle': float, optional
-    
+    use_fft: bool, default: False
+        if True, we turn both data and filter to fourier space, multiply and inverse.
+        Remember that if data is not tiled, you may have artifacts.
     Returns:
     --------
     filtered_data4d : ndarray
         Filtered 4D-STEM data with applied spatial incoherence.
     """
-    # Generate Gaussian filter based on given parameters
     gaussian_filter = Gaussian_2dkernel(**spatInc_params).astype('float32')
     
-    # Get dimensions of the 4D data
     n_x, n_y, n_r, n_c = data4d.shape
     
-    # Fourier transform of the 4D data
-    data4d_ft = scipy.fft.fftn(data4d, axes=(0, 1))
-    
-    # Fourier transform of the Gaussian filter
-    filter_ft = scipy.fft.fftn(gaussian_filter, s=(n_x, n_y))
-    
-    # Tile the filter across the 4D data dimensions
-    filter_ft_tiled = np.tile(filter_ft[:, :, np.newaxis, np.newaxis], (1, 1, n_r, n_c))
-    
-    # Apply the filter in Fourier space
-    result_ft = data4d_ft * filter_ft_tiled
-    
-    # Inverse Fourier transform to get the filtered data
-    filtered_data4d = scipy.fft.ifftn(result_ft, axes=(0, 1)).real
+    if use_fft:
+        data4d_ft = scipy.fft.fftn(data4d, axes=(0, 1))
+        filter_ft = scipy.fft.fftn(gaussian_filter, s=(n_x, n_y))
+        filter_ft_tiled = np.tile(
+            filter_ft[:, :, np.newaxis, np.newaxis], (1, 1, n_r, n_c))
+        result_ft = data4d_ft * filter_ft_tiled
+        filtered_data4d = scipy.fft.ifftn(result_ft, axes=(0, 1)).real
+    else:
+
+        gaussian_filter = np.expand_dims(gaussian_filter, -1)
+        gaussian_filter = np.expand_dims(gaussian_filter, -1)
+        gaussian_filter = np.tile(gaussian_filter, (1, 1, n_r, n_c))
+        
+        imgbywin = mcemtools.image_by_windows((n_x, n_y), gaussian_filter.shape,
+                                              skip = (1, 1), method = 'fixed')
+        filtered_data4d = np.zeros(
+            (imgbywin.grid_shape[0],imgbywin.grid_shape[1], n_r, n_c),
+            dtype = data4d.dtype)
+        for grc in imgbywin.grid:
+            filtered_data4d[grc[0], grc[1]] = (data4d[
+                grc[0]:grc[0] + imgbywin.win_shape[0], 
+                grc[1]:grc[1] + imgbywin.win_shape[1]] * gaussian_filter).sum((0, 1))
 
     return filtered_data4d
 
@@ -306,7 +315,7 @@ def conv_4D(data4D,
         imgbywin.grid_shape + (data4D_cpy.shape[1], data4D_cpy.shape[2]))
     return data4D_cpy
 
-def bin_image(data, factor = 2, logger = print):
+def bin_image(data, factor = 2, logger = None):
     """ bin image rapidly, simply by summing every "factor" number of pixels.
     :param data: 
         must have at least 2 dimensions 
@@ -324,7 +333,8 @@ def bin_image(data, factor = 2, logger = print):
     else:
         data_summed = np.zeros((n_x - factor + 1, n_y - factor + 1), 
                                dtype = data.dtype)
-    logger(f'bin_image start for dataset of shape {data_shape}...')
+    if logger is not None:
+        logger(f'bin_image start for dataset of shape {data_shape}...')
     
     fh = int(factor/2)
     
@@ -337,13 +347,14 @@ def bin_image(data, factor = 2, logger = print):
 
     data_binned = data_summed[::factor, ::factor]
         
-    logger(f'... bin_image done with shape {data_binned.shape}')
+    if logger is not None:
+        logger(f'... bin_image done with shape {data_binned.shape}')
     return data_binned
 
 def bin_4D(data4D, 
            n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
            method_pos: str = 'skip', method_pix: str = 'linear',
-           conv_function = sum_4D, skip = (1, 1), logger = print):
+           conv_function = sum_4D, skip = (1, 1), logger = None):
     """
     options for methods are: skip, linear and conv
     """

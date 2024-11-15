@@ -7,6 +7,12 @@ from lognflow import printprogress
 import scipy
 from itertools import product
 
+def channel_to_image(data_ch, det_geo):
+    img = np.zeros(det_geo.shape)
+    for cnt, lbl in enumerate(np.unique(det_geo.ravel())[1:]):
+        img[det_geo == lbl] = data_ch[cnt]
+    return img
+
 def load_dm4(filename):
     from hyperspy.api import load as hyperspy_api_load
     return hyperspy_api_load(filename)
