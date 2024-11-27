@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = '0.9.7'
+__version__ = '0.9.8'
 
 """The setup script."""
 
@@ -12,17 +12,7 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['lognflow',
-                'scikit-learn',
-                'PyQt5',
-                'PySide6',
-                'napari',
-                'torch',
-                'torchvision',
-                'torchaudio',
-                'pypng',
-                'h5py',
-                'ase']
+requirements = ['lognflow']
 
 test_requirements = ['pytest>=3.7', ]
 

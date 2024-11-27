@@ -8,4 +8,3 @@ torchvision
 torchaudio
 pypng
 h5py
-ase

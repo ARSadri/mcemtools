@@ -191,8 +191,10 @@ class viewer_4D:
                         mask4D = np.zeros(self.data4D_shape, dtype='int8')
                         mask4D[mask2D_neg==1] = 1
                         _, _PACBED = self.statistics_4D(self.data4D, mask4D)
-                        PACBED -= _PACBED/mask2D_neg.sum()*(
-                            mask2D==1).mean()
+                        self.logger(f'PACBED:{PACBED.mean()}')
+                        self.logger(f'PACBED:{_PACBED.mean()}')
+                        self.logger(f'PACBED:{mask2D.sum()/mask2D_neg.sum()}')
+                        PACBED -= _PACBED / mask2D_neg.sum()* mask2D.sum()
                         
                 self.viewers_list[0].layers[0].data = PACBED
                 self.logger('PACBED image updated')

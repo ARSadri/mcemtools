@@ -85,17 +85,16 @@ class SelfAttention(nn.Module):
         attention_output = attention_output.reshape(
             attention_output.shape[0], -1, self.n_heads)
         attention_output = attention_output.mean(dim=-1)
-        
+
         attention_output = self.sig(attention_output)
-        
+
         attention_output = attention_output.view(
             x_hat_shape[0], x_hat_shape[1], x_hat_shape[4], 1, -1)
         attention_output = attention_output.swapaxes(4, 3).swapaxes(3, 2).swapaxes(4, 3)
         return attention_output
 
 def dynamic_routing(u_hat, squash, routing_iterations=3):
-    b_ij = torch.zeros(*u_hat.size())
-    b_ij = b_ij.cuda()
+    b_ij = torch.zeros(*u_hat.size(), device = u_hat.device)
     for iterations in range(routing_iterations):
         c_ij = softmax(b_ij, dim=2)
         s_j = (c_ij*u_hat).sum(dim=2, keepdim=True)
@@ -126,7 +125,7 @@ class ClassifierCaps(nn.Module):
                 x_hat, self.squash, routing_iterations=self.routing_iterations)
         else:
             v_j = self.attention(x_hat).mean(2, keepdim=True)
-            
+        
         return v_j
 
     def squash(self, x):
@@ -217,7 +216,7 @@ class CapsuleNetwork(nn.Module):
         return caps_out, reconstructed, y
 
 class CapsuleLoss(nn.Module):
-    def __init__(self, data_gen, recon_class_weight = 16):
+    def __init__(self, data_gen, recon_class_weight = 100):
         super(CapsuleLoss, self).__init__()
         self.reconstruction_loss = nn.MSELoss(size_average=False)
         self.data_gen = data_gen
@@ -226,7 +225,7 @@ class CapsuleLoss(nn.Module):
     
     def forward(self, preds, labels, inds):#x, labels, images, reconstructions):
         self.n_calls += 1
-        x, reconstructions = preds[0], preds[1]
+        x, reconstructions, y = preds
         batch_size = len(x)
         v_c = torch.sqrt((x**2).sum(dim=2, keepdim=True))
         left = F.relu(0.9-v_c).view(batch_size, -1)

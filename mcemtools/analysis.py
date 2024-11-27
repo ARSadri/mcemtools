@@ -196,8 +196,8 @@ def calc_symm(CBED, inputs_to_share: tuple):
 
 def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False, 
              verbose = True, use_multiprocessing = False,
-             use_autoconvolutiuon = True):
-    
+             use_autoconvolutiuon = False):
+    assert not use_autoconvolutiuon
     n_x, n_y, n_r, n_c = data4D.shape
     
     if mask2D is not None:

@@ -136,4 +136,9 @@ History
 
 0.9.7 (2024-11-15)
 -------------------
-* critical bug fixed in applying spatial incoherence 
+* critical bug fixed in applying spatial incoherence
+
+0.9.8 (2024-11-15)
+-------------------
+* Maybe the installer should not install napari stuff
+* removed autoconvolution from symmstem
