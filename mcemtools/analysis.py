@@ -7,6 +7,47 @@ from itertools import product
 import torch
 import mcemtools
 
+def Lorentzian_2dkernel(filter_size, gamma_x=1, gamma_y=1, angle=0):
+    """
+    Generate a 2D Lorentzian kernel with specified parameters.
+    
+    Parameters:
+    -----------
+    filter_size : int
+        Size of the kernel (square grid).
+    gamma_x : float, optional
+        Scale parameter (half-width at half-maximum) along the x-axis. Default is 1.
+    gamma_y : float, optional
+        Scale parameter (half-width at half-maximum) along the y-axis. Default is 1.
+    angle : float, optional
+        Rotation angle (in degrees) for the kernel. Default is 0.
+    
+    Returns:
+    --------
+    kern2d : ndarray
+        Normalized 2D Lorentzian kernel.
+    """
+    # Rotation matrix
+    theta = np.deg2rad(angle)
+    R = np.array([[np.cos(theta), -np.sin(theta)], 
+                  [np.sin(theta),  np.cos(theta)]])
+    
+    # Create meshgrid
+    lim = filter_size // 2 + (filter_size % 2) / 2
+    x = np.linspace(-lim, lim, filter_size)
+    y = np.linspace(-lim, lim, filter_size)
+    X, Y = np.meshgrid(x, y)
+    
+    # Rotate coordinates
+    coords = np.stack([X.flatten(), Y.flatten()], axis=0)
+    rotated_coords = R @ coords
+    X_rot, Y_rot = rotated_coords[0, :].reshape(X.shape), rotated_coords[1, :].reshape(Y.shape)
+    
+    # Compute Lorentzian kernel
+    kern2d = 1 / (1 + (X_rot / gamma_x)**2 + (Y_rot / gamma_y)**2)
+    return kern2d / kern2d.sum()
+
+
 def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
     """
     Generate a 2D Gaussian kernel with specified parameters.
@@ -52,47 +93,101 @@ def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
     
     return kern2d / kern2d.sum()
 
-def spatial_incoherence_4D(data4d, spatInc_params, use_fft = False):
+def spatial_incoherence_4D(data4d, spatInc_params, use_fft = True, return_filter = False):
     """
-    Apply spatial incoherence using a Gaussian filter on 4D-STEM data.
-    
+    Apply spatial incoherence filtering to 4D-STEM data using Gaussian and/or Lorentzian filters.
+
     Parameters:
     -----------
     data4d : ndarray
-        4D dataset (n_x, n_y, n_r, n_c) to apply the filtering.
+        Input 4D dataset of shape (n_x, n_y, n_r, n_c), where:
+        - n_x, n_y: Spatial dimensions.
+        - n_r, n_c: Detector dimensions.
     spatInc_params : dict
-        Dictionary of parameters for the Gaussian filter. Should include:
-        - 'filter_size': int
-        - 's1': float, optional
-        - 's2': float, optional
-        - 'angle': float, optional
-    use_fft: bool, default: False
-        if True, we turn both data and filter to fourier space, multiply and inverse.
-        Remember that if data is not tiled, you may have artifacts.
+        Parameters for the spatial incoherence filter. Expected keys include:
+        - 'model' : str or list of str
+            Specifies the filter type(s) to apply. Options are 'Gaussian', 'Lorentzian', or both.
+        - 's1', 's2' : float, optional
+            Parameters for the Gaussian filter (e.g., standard deviations along principal axes).
+        - 'gamma_x', 'gamma_y' : float, optional
+            Parameters for the Lorentzian filter (e.g., scale factors along principal axes).
+        - 'angle' : float, optional
+            Rotation angle for the filters (applies to both Gaussian and Lorentzian filters).
+    use_fft : bool, optional
+        If True, performs the filtering in Fourier space for efficiency. 
+        If False, performs the filtering in real space. Default is False.
+
     Returns:
     --------
     filtered_data4d : ndarray
-        Filtered 4D-STEM data with applied spatial incoherence.
+        The filtered 4D dataset, of the same shape as the input `data4d`.
+
+    Notes:
+    ------
+    - In the Fourier-space approach (`use_fft=True`), the combined filter is computed and applied 
+      in Fourier space for faster computation on large datasets.
+    - In the real-space approach (`use_fft=False`), the filtering is performed directly using 
+      window-based operations, which may be slower but avoids FFT artifacts.
+    - Filters are normalized before application to ensure the total weight is 1.
+    - If both 'Gaussian' and 'Lorentzian' models are specified in `spatInc_params['model']`, the 
+      filters are combined (summed) before normalization.
+
+    Example Usage:
+    --------------
+    >>> spatInc_params = {
+    >>>     'model': ['Gaussian', 'Lorentzian'],
+    >>>     's1': 1.5,
+    >>>     's2': 2.0,
+    >>>     'gamma_x': 0.8,
+    >>>     'gamma_y': 0.9,
+    >>>     'angle': 45
+    >>> }
+    >>> filtered_data = spatial_incoherence_4D(data4d, spatInc_params, use_fft=True)
     """
-    gaussian_filter = Gaussian_2dkernel(**spatInc_params).astype('float32')
-    
     n_x, n_y, n_r, n_c = data4d.shape
-    
+
+    if not ('model' in spatInc_params):
+        spatInc_params['model'] = 'Gaussian'
+
     if use_fft:
+        filter = np.zeros((n_x, n_y))
+        if 'Gaussian' in spatInc_params['model']:
+            gaussian_filter = Gaussian_2dkernel(
+                np.maximum(data4d.shape[0], data4d.shape[1]), 
+                spatInc_params['s1'], spatInc_params['s2'], spatInc_params['angle'])
+            filter += mcemtools.masking.crop_or_pad(
+                gaussian_filter, (data4d.shape[0], data4d.shape[1]))
+        if 'Lorentzian' in spatInc_params['model']:
+            Lorentzian_filter = Lorentzian_2dkernel(
+                np.maximum(data4d.shape[0], data4d.shape[1]), 
+                spatInc_params['gamma_x'], spatInc_params['gamma_y'], spatInc_params['angle'])
+            
+            from lognflow.plt_utils import plt_imshow, plt
+            
+            filter += mcemtools.masking.crop_or_pad(
+                Lorentzian_filter, (data4d.shape[0], data4d.shape[1]))
+        filter = filter / filter.sum()
+
         data4d_ft = scipy.fft.fftn(data4d, axes=(0, 1))
-        filter_ft = scipy.fft.fftn(gaussian_filter, s=(n_x, n_y))
+        filter_ft = scipy.fft.fftn(filter, s=(n_x, n_y))
         filter_ft_tiled = np.tile(
             filter_ft[:, :, np.newaxis, np.newaxis], (1, 1, n_r, n_c))
         result_ft = data4d_ft * filter_ft_tiled
         filtered_data4d = scipy.fft.ifftn(result_ft, axes=(0, 1)).real
     else:
+        filter = np.zeros((n_x, n_y))
+        if 'Gaussian' in spatInc_params['model']:
+            filter += Gaussian_2dkernel(**spatInc_params)
+        if 'Lorentzian' in spatInc_params['model']:
+            filter += Lorentzian_2dkernel(**spatInc_params)
+        filter = filter / filter.sum()
 
         gaussian_filter = np.expand_dims(gaussian_filter, -1)
         gaussian_filter = np.expand_dims(gaussian_filter, -1)
         gaussian_filter = np.tile(gaussian_filter, (1, 1, n_r, n_c))
         
-        imgbywin = mcemtools.image_by_windows((n_x, n_y), gaussian_filter.shape,
-                                              skip = (1, 1), method = 'fixed')
+        imgbywin = mcemtools.image_by_windows(
+            (n_x, n_y), gaussian_filter.shape, skip = (1, 1), method = 'fixed')
         filtered_data4d = np.zeros(
             (imgbywin.grid_shape[0],imgbywin.grid_shape[1], n_r, n_c),
             dtype = data4d.dtype)
@@ -101,7 +196,10 @@ def spatial_incoherence_4D(data4d, spatInc_params, use_fft = False):
                 grc[0]:grc[0] + imgbywin.win_shape[0], 
                 grc[1]:grc[1] + imgbywin.win_shape[1]] * gaussian_filter).sum((0, 1))
 
-    return filtered_data4d
+    if return_filter:
+        return filtered_data4d, filter
+    else:
+        return filtered_data4d
 
 def normalize_4D(data4D, weights4D = None, method = 'loop'):
     """
@@ -129,8 +227,8 @@ def normalize_4D(data4D, weights4D = None, method = 'loop'):
                 data4D[x_cnt, y_cnt] = cbed.copy()
     return data4D
 
-def calc_ccorr(CBED, inputs_to_share: tuple):
-    mask_ang, nang, mflag = inputs_to_share
+def calc_ccorr(CBED, args: tuple):
+    mask_ang, nang, mflag = args
     
     vec_a = warp_polar(CBED)
     vec_a_n = vec_a[mask_ang > 0]
@@ -151,13 +249,15 @@ def calc_ccorr(CBED, inputs_to_share: tuple):
         rot = np.roll(rot, 1, axis=0)
     return corr
 
-def calc_symm(CBED, inputs_to_share: tuple):
-    mask_ang, nang, mflag = inputs_to_share
+def calc_symm(CBED, args: tuple):
+    mask_ang, nang, mflag = args
     
-    polar = warp_polar(CBED)
-    kvec = np.tile(np.array([np.arange(polar.shape[0])]).swapaxes(0, 1),
-                (1, nang))/(nang/2/np.pi)
-    polar[mask_ang == 0] = 0
+    nang = 360
+    
+    polar = warp_polar(CBED) #shape:  360, 46 for a 64x64 pattern
+    kvec = np.arange(polar.shape[1]) / (nang / 2 / np.pi)
+    if mask_ang is not None:
+        polar[mask_ang == 0] = 0
     
     """
         perform angular autocorrelation or autoconvolutiuon using Fourier
@@ -168,18 +268,15 @@ def calc_symm(CBED, inputs_to_share: tuple):
         transform is implied to rotate, perform inversion, then rotate back.
     """
     if mflag == 1: #mirror symmetries
-        polar_fft_ifft = \
-            np.real(np.fft.ifft((np.fft.fft(polar,nang,2))**2,nang,2))
+        polar_autocorr = np.real(np.fft.ifft((np.fft.fft(polar,nang,0))**2,nang,0))
     else:          #rotational symmetries
-        polar_fft_ifft = \
-            np.real(np.fft.ifft(np.abs(np.fft.fft(polar,nang,1))**2,nang,1))
-      
+        polar_autocorr = np.real(np.fft.ifft(np.abs(np.fft.fft(polar,nang,0)),nang,0))
     """
         multiply array to account for Jacobian polar r weighting (here kvec). 
-        Integrate over radius in the diffraction patter - one could also
+        Integrate over radius in the diffraction pattern - one could also
         mask the pattern beforehand, as in ACY Liu's correlogram approach.
     """
-    corr = np.sum(polar_fft_ifft*kvec)
+    corr = (polar_autocorr*kvec[np.newaxis,:]).sum(1)
     
     """
         notice the deliberate omission of fftshift above.     
@@ -189,15 +286,14 @@ def calc_symm(CBED, inputs_to_share: tuple):
         normalisation, include otherwise redundant polar coordinate 
         conversion and subsequent squaring.
     """
-    corr = corr/np.sum(np.sum((polar**2)*kvec[:, :polar.shape[1]]))
+    corr = corr/((np.abs(polar))*kvec[np.newaxis,:]).sum()
     
     return corr
-
 
 def SymmSTEM(data4D, mask2D = None, nang = 180, mflag = False, 
              verbose = True, use_multiprocessing = False,
              use_autoconvolutiuon = False):
-    assert not use_autoconvolutiuon
+    # assert not use_autoconvolutiuon, 'autoconvolutiuon is not ready yet!'
     n_x, n_y, n_r, n_c = data4D.shape
     
     if mask2D is not None:
@@ -686,64 +782,145 @@ def locate_atoms(stem, min_distance = 3, min_distance_init = 1,
     return coordinates
 
 def stem_image_nyquist_interpolation(
-        StemImage,xlen,ylen,alpha,Knought,npixout,npiyout):
+        StemImage, xlen, ylen, alpha, Knought, npixout, npiyout):
     """
-        StemImageNyquistInterpolation Nyquist interpolates a STEM image 
-        using Fourier methods. STEMImage has real space dimensions ylen 
-        and xlen in Angstrom - Note use of spatial coordinates
-        
-        alpha = probe-forming aperture semiangle in mrad 
-        Knought = vacuum wavevector (in inverse Angstrom)
-        
-        \\lambda_0 = \frac{h}{\sqrt{2 m_e e V \left( 1 + \frac{e V}{2 m_e c^2} \right)}}
-        K_0 = \frac{2pi}{\\lambda_0}
-        
-        npixout,npiyout give number of pixels in x and y for output
+    Nyquist interpolates a STEM image using Fourier methods.
+    STEMImage has real space dimensions ylen and xlen in Angstrom.
+
+    Parameters:
+    - StemImage: Input 2D STEM image.
+    - xlen, ylen: Real space dimensions in Angstrom.
+    - alpha: Probe-forming aperture semiangle in mrad.
+    - Knought: Vacuum wavevector (in inverse Angstrom).
+    - npixout, npiyout: Number of pixels in the output image (x, y).
+
+    Returns:
+    - StemImageInterpolated: Upsampled 2D STEM image.
     """
-   
-    [npiy, npix] = np.shape(StemImage)   # Note use of spatial coordinates
-    qalpha = Knought * alpha * 1.0e-3    # Probe cutoff (in inverse Angstrom)
-    qband = 2.0 * qalpha    # STEM image bandwith limit (in inverse Angstrom)
-    qnyq = 2.0 * qband    # Nyquist spatial frequency (in inverse Angstrom)
-    # kxscale = 1/xlen
-    # kyscale = 1/ylen
-    # xscale = xlen/npix
-    # yscale = ylen/npiy
+    npiy, npix = np.shape(StemImage)
+    qalpha = Knought * alpha * 1.0e-3
+    qband = 2.0 * qalpha
+    qnyq = 2.0 * qband
 
     npixmin = np.ceil(xlen * qnyq)
     npiymin = np.ceil(ylen * qnyq)
-   
+
     if npix < npixmin or npiy < npiymin:
-        print('Input STEM image is insufficiently '
-              'sampled for Nyquist interpolation')
-       
-    # Ex-D'Alfonso implementation
-    ctemp2 = np.vectorize(complex)(StemImage)
-    ctemp2 = np.fft.fft2(ctemp2)
-    # ctemp2 = ctemp2 * sqrt(npiy*npix)
-       
-    Npos_y = round(np.floor(npiy/2))
-    Npos_x = round(np.floor(npix/2))
-     
-    shifty = npiy - Npos_y - 1
-    shiftx = npix - Npos_x - 1
+        print('Input STEM image is insufficiently sampled for Nyquist interpolation')
 
-    ctemp2 = np.roll(np.roll(ctemp2,int(shifty),axis=0), int(shiftx), axis=1)
+    ctemp2 = np.fft.fftshift(np.fft.fft2(StemImage))
+    ctemp = np.zeros((npiyout, npixout), dtype=complex)
 
-    ctemp = np.vectorize(complex)(np.zeros((npiyout,npixout)))
-    ctemp[0:npiy,0:npix] = ctemp2
+    center_y, center_x = npiyout // 2, npixout // 2
+    start_y, start_x = center_y - npiy // 2, center_x - npix // 2
+    ctemp[start_y:start_y + npiy, start_x:start_x + npix] = ctemp2
 
-    ctemp = np.roll(np.roll(ctemp,-int(shifty),axis=0),-int(shiftx),axis=1)
-   
-    StemImageInterpolated = np.real(np.fft.ifft2(ctemp))
-   
-    StemImageInterpolated = StemImageInterpolated * (npixout * npiyout) / (npix * npiy)
-   
+    ctemp = np.fft.ifft2(np.fft.ifftshift(ctemp))
+    StemImageInterpolated = np.real(ctemp)
+
+    StemImageInterpolated *= (npixout * npiyout) / (npix * npiy)
+
     return StemImageInterpolated
+
+def upsample_4d_data(data4d, xlen, ylen, alpha, Knought, npixout, npiyout):
+    """
+    Upsamples a 4-dimensional dataset in real space.
+
+    Parameters:
+    - data4d: Input 4D dataset.
+    - xlen, ylen: Real space dimensions in Angstrom.
+    - alpha: Probe-forming aperture semiangle in mrad.
+    - Knought: Vacuum wavevector (in inverse Angstrom).
+    - npixout, npiyout: Number of pixels in the output image (x, y).
+
+    Returns:
+    - data4d_upsampled: Upsampled 4D dataset.
+    """
+    data4d_shape = data4d.shape
+    data4d = data4d.reshape(data4d_shape[0], data4d_shape[1], -1)
+    data4d_upsampled = np.zeros(
+        (npiyout, npixout, data4d.shape[2]), dtype=data4d.dtype)
+
+    for pix_cnt in printprogress(range(data4d.shape[2])):
+        data4d_upsampled[:, :, pix_cnt] = stem_image_nyquist_interpolation(
+            StemImage=data4d[:, :, pix_cnt].copy(), 
+            xlen=xlen, ylen=ylen, alpha=alpha, Knought=Knought, 
+            npixout=npixout, npiyout=npiyout)
+
+    data4d_upsampled = data4d_upsampled.reshape(
+        npiyout, npixout, data4d_shape[2], data4d_shape[3])
+
+    return data4d_upsampled
+
+def stem_4d_nyquist_interpolation_fourier(
+        data4d, xlen, ylen, alpha, Knought, npixout, npiyout):
+    """
+    Nyquist interpolates a 4D STEM dataset in real space using 4D Fourier methods.
+    Each STEM image has real space dimensions ylen and xlen in Angstrom.
+
+    Parameters:
+    - data4d: Input 4D STEM dataset (n_x, n_y, n_r, n_c).
+    - xlen, ylen: Real space dimensions in Angstrom.
+    - alpha: Probe-forming aperture semiangle in mrad.
+    - Knought: Vacuum wavevector (in inverse Angstrom).
+    - npixout, npiyout: Number of pixels in the output image (x, y).
+
+    Returns:
+    - data4d_upsampled: Upsampled 4D STEM dataset (npixout, npiyout, n_r, n_c).
+    """
+    n_x, n_y, n_r, n_c = data4d.shape
+
+    # Ensure the output size in real space (npixout, npiyout) is valid
+    if npixout < n_x or npiyout < n_y:
+        raise ValueError(f"Output dimensions ({npixout}, {npiyout}) must be >= real-space input dimensions ({n_x}, {n_y}).")
+
+    # Compute Nyquist parameters
+    qalpha = Knought * alpha * 1.0e-3
+    qband = 2.0 * qalpha
+    qnyq = 2.0 * qband
+
+    npixmin = np.ceil(xlen * qnyq)
+    npiymin = np.ceil(ylen * qnyq)
+
+    if n_c < npixmin or n_r < npiymin:
+        print('Warning: Input 4D STEM dataset is insufficiently sampled for Nyquist interpolation.')
+
+    # Perform the 4D Fourier transform
+    ctemp2 = np.fft.fftshift(np.fft.fftn(data4d, axes=(2, 3)), axes=(2, 3))
+
+    ctemp = mcemtools.masking.crop_or_pad(ctemp2, (npiyout, npixout, n_r, n_c))
+
+    # # Create a larger 4D array to hold the interpolated Fourier components
+    # ctemp = np.zeros((npixout, npiyout, n_r, n_c), dtype=complex)
+    #
+    # # Compute insertion indices for the 4D FFT data
+    # pad_y = (npiyout - n_y) // 2
+    # pad_x = (npixout - n_x) // 2
+    #
+    # start_y = max(0, pad_y)  # Prevent negative indices
+    # start_x = max(0, pad_x)
+    # end_y = start_y + n_y
+    # end_x = start_x + n_x
+    #
+    # # Verify compatibility
+    # if (end_y - start_y != n_y) or (end_x - start_x != n_x):
+    #     raise ValueError("Mismatch between insertion region and real-space input dimensions.")
+    #
+    # # Insert the FFT data into the center of the larger array
+    # ctemp[start_y:end_y, start_x:end_x, :, :] = ctemp2
+
+    # Perform the inverse 4D FFT and shift back
+    ctemp = np.fft.ifftn(np.fft.ifftshift(ctemp, axes=(2, 3)), axes=(2, 3))
+    data4d_upsampled = np.real(ctemp)
+
+    # Normalize intensity
+    data4d_upsampled *= (npixout * npiyout) / (n_x * n_y)
+
+    return data4d_upsampled
 
 def force_stem_4d(a4d, b4d):
     """ force stem
-        force the stem image of 4d dataset a to be the stem image of 4d dataset b.
+        force the stem image of the dataset a to be the stem image of the dataset b.
     """
     
     stem = a4d.mean((2, 3))

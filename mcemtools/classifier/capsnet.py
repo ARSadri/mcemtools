@@ -7,6 +7,30 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
+def quadratic_off_diagonal_matrix(N):
+    """
+    Creates an NxN matrix where diagonal elements are zero,
+    and off-diagonal elements increase quadratically with distance from the diagonal.
+    
+    Args:
+    N (int): Size of the matrix (NxN).
+    
+    Returns:
+    numpy.ndarray: The NxN matrix.
+    """
+    # Create an NxN matrix
+    import numpy as np
+    matrix = np.zeros((N, N))
+    
+    # Fill in the off-diagonal elements
+    for i in range(N):
+        for j in range(N):
+            if i != j:  # Ensure the diagonal elements are zero
+                distance = abs(i - j)
+                matrix[i, j] = distance**2  # Quadratic increase with distance from the diagonal
+    
+    return matrix
+
 class ConvLayer(nn.Module):
     def __init__(self, in_channels=1, out_channels=256,
                        kernel_size=9, stride=1, padding=0):
@@ -114,17 +138,17 @@ class ClassifierCaps(nn.Module):
             num_classes, Prim_out_channels*PrimaryCaps_n_pix, 
             Classifier_in_channels, Classifier_out_channels))
         self.attention = SelfAttention(Prim_out_channels*PrimaryCaps_n_pix, n_heads)
-        
+
     def forward(self, x):
         x = x[None, :, :, None, :]
         W = self.W[:, None, :, :, :]
         x_hat = torch.matmul(x, W)
         
-        if 1: # 1 with or 0 without dynamic routing
-            v_j = dynamic_routing(
-                x_hat, self.squash, routing_iterations=self.routing_iterations)
-        else:
-            v_j = self.attention(x_hat).mean(2, keepdim=True)
+        v_j = dynamic_routing(
+            x_hat, self.squash, routing_iterations=self.routing_iterations)
+        v_j = v_j.swapaxes(0, 1).squeeze()
+        
+        v_j = F.leaky_relu(v_j, 0.05) - F.relu(v_j - 1) * 0.95
         
         return v_j
 
@@ -153,21 +177,20 @@ class Decoder(nn.Module):
         )
     
     def forward(self, x):
-        classes = (x**2).sum(dim=-1)**0.5
-        classes = F.softmax(classes, dim=-1)
-        _, max_length_indices = classes.max(dim=1)
-        
-        sparse_matrix = torch.eye(self.num_classes).cuda()
-        y = sparse_matrix.index_select(dim=0, index=max_length_indices.data)
-        x = x * y[:, :, None]  # Element-wise multiplication
+        if(0):
+            classes = (x**2).sum(dim=-1)**0.5
+            classes = F.softmax(classes, dim=-1)
+            _, max_length_indices = classes.max(dim=1)
+            sparse_matrix = torch.eye(self.num_classes).cuda()
+            y = sparse_matrix.index_select(dim=0, index=max_length_indices.data)
+            x = x * y[:, :, None]
         
         flattened_x = x.reshape(x.size(0), -1)
         reconstructed = self.lin_layers(flattened_x)
         
-        # Reshaping the output to have the required number of channels
-        reconstructed = reconstructed.reshape(-1, self.output_channels, self.image_n_pix)  # Example for 28x28 image
-        
-        return reconstructed, y
+        reconstructed = reconstructed.reshape(-1, self.output_channels, self.image_n_pix) 
+
+        return reconstructed
 
 class CapsuleNetwork(nn.Module):
     def __init__(self, 
@@ -204,53 +227,71 @@ class CapsuleNetwork(nn.Module):
             image_n_pix = image_n_pix,
             output_channels = in_channels)
         
-    def forward(self, x):
+    def forward(self, x, return_capsuls = False):
         assert x.shape[2]*x.shape[3] == self.image_n_pix, \
             f'capsnet: You said images have {self.image_n_pix} pixels, ' \
             + f' but they actually have {x.shape[2]*x.shape[3]}.'
+        
         features = self.conv_layer(x)
         primary_caps_out = self.primary_capsule(features)
-        caps_out = self.Classifier_capsule(
-            primary_caps_out).squeeze().transpose(0, 1)
-        reconstructed, y = self.decoder(caps_out)
-        return caps_out, reconstructed, y
+        caps_out = self.Classifier_capsule(primary_caps_out)
+        
+        classification = caps_out.sum(dim=2)
+        
+        reconstructed = self.decoder(caps_out)
+        
+        if return_capsuls:
+            return classification, reconstructed, caps_out
+        else:
+            return classification, reconstructed
 
 class CapsuleLoss(nn.Module):
-    def __init__(self, data_gen, recon_class_weight = 100):
+    def __init__(self, data_gen, classifier_weight = 100, TF_imbalance = 5):
         super(CapsuleLoss, self).__init__()
-        self.reconstruction_loss = nn.MSELoss(size_average=False)
+        self.reconstruction_loss = nn.MSELoss(reduction='mean')
+        self.label_mse_loss = nn.MSELoss(reduction='mean')
         self.data_gen = data_gen
-        self.recon_class_weight = recon_class_weight
-        self.n_calls = 0
+        self.classifier_weight = classifier_weight
+        self.TF_imbalance = TF_imbalance
+        # self.diagloss = torch.from_numpy(quadratic_off_diagonal_matrix(51)).float().cuda()
     
-    def forward(self, preds, labels, inds):#x, labels, images, reconstructions):
-        self.n_calls += 1
-        x, reconstructions, y = preds
-        batch_size = len(x)
-        v_c = torch.sqrt((x**2).sum(dim=2, keepdim=True))
-        left = F.relu(0.9-v_c).view(batch_size, -1)
-        right = F.relu(v_c-0.1).view(batch_size, -1)
-        margin_loss_all = labels * left + 0.5 * (1.-labels) * right
-        margin_loss_all = self.recon_class_weight * margin_loss_all
-        margin_loss = margin_loss_all.mean()
-
+    # conf = x.swapaxes(0, 1).view(x.shape[1], -1) @ x.swapaxes(0, 1).view(x.shape[1], -1).T
+    # conf_loss = ((conf * self.diagloss)**2).mean()**0.5
+    def forward(self, preds, labels, inds):
+        clssif, reconstructions = preds
+        batch_size = len(clssif)
+        
+        if(0):
+            left  = (F.relu( 0.9-clssif) + 0.1 * F.relu(clssif-1.1)).view(batch_size, -1)
+            right = (0.1 * F.relu(-0.1-clssif) + F.relu(clssif-0.1)).view(batch_size, -1)
+            margin_loss_all = labels * left + self.TF_imbalance * (1.0 - labels) * right
+        else:
+            margin_loss_all = ((labels - clssif)**2).mean((1))**0.5
+        margin_loss_all = self.classifier_weight * margin_loss_all
         images = self.data_gen(inds)[0]
         try:
             images = torch.from_numpy(images).float().cuda()
         except: pass
-        # images = images.sum(1)
         images = images.view(reconstructions.shape[0], reconstructions.shape[1], -1)
         
         reconstruction_loss_all = []
         for reconstructions_, images_ in zip(reconstructions, images):
             reconstruction_loss_all.append(self.reconstruction_loss(reconstructions_, images_))
-        reconstruction_loss_all = torch.tensor(reconstruction_loss_all)
+        
+        reconstruction_loss_all = torch.tensor(
+            reconstruction_loss_all, device = reconstruction_loss_all[0].device)
 
-        reconstruction_loss = self.reconstruction_loss(reconstructions, images) / batch_size
+        lbls = torch.argmax(labels, axis = 1)
+        clss = torch.argmax(clssif, axis = 1)
+        if (lbls != clss).sum() > 0:
+            reconstruction_loss_all[lbls == clss] *= self.TF_imbalance
+            margin_loss_all[lbls == clss] /= self.TF_imbalance
 
-        loss =  margin_loss + reconstruction_loss
-        return (loss,
-                margin_loss_all.detach(), reconstruction_loss_all.detach())
+        reconstruction_loss = reconstruction_loss_all.mean()
+        margin_loss = margin_loss_all.mean()
+
+        loss =  (margin_loss + reconstruction_loss)
+        return (loss, margin_loss_all.detach(), reconstruction_loss_all.detach())
 
 from mcemtools.denoise.LossFunc import mseLoss
 
@@ -277,8 +318,7 @@ if __name__ == '__main__':
     print(data.shape)
     time_time = time.time()
     for data_, label_ in zip(data, label): 
-        caps_out, reconstructed, y = capsule_net(data_)
-        # loss(y, label_)
+        caps_out, clssifucted = capsule_net(data_)
     print(1000*(time.time() - time_time)/data.shape[0]/data.shape[1])
     
     

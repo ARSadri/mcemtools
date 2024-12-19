@@ -56,7 +56,10 @@ def annular_mask(image_shape : tuple,
     
     if radius is None: 
         # use the smallest distance between the centre and image walls
-        radius = np.floor(np.minimum(*centre))
+        if in_radius is None:
+            radius = np.floor(np.minimum(*centre))
+        else:
+            radius_ = np.inf
 
     dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 

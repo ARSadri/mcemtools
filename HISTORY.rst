@@ -142,3 +142,7 @@ History
 -------------------
 * Maybe the installer should not install napari stuff
 * removed autoconvolution from symmstem
+
+0.9.9 (2024-12-19)
+-------------------
+* CapsNet is complete

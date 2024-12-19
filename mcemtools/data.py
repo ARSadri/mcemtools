@@ -565,3 +565,108 @@ def apply_segment_sums(img, det_geo, return_by_channle = False):
         return data_by_ch
     else:
         return modified_img
+    
+def apply_detector_response(data4d, det_resp):
+    try:
+        n_ch, n_r, n_c = det_resp.shape
+    except Exception as e:
+        print(f'det_resp : {det_resp.shape} must be in shape of n_ch x n_r x n_c')
+        raise e
+
+    data_by_ch = np.zeros((data4d.shape[0], data4d.shape[1], n_ch), dtype = data4d.dtype)
+    
+    # prod = np.tile(data4d[np.newaxis], (n_ch, 1, 1, 1, 1)) * np.tile(
+    #     det_resp[:, np.newaxis, np.newaxis], (1, data4d.shape[0], data4d.shape[1], 1, 1))
+    # data_by_ch = prod.mean((3, 4)).swapaxes(0, 1).swapaxes(1, 2)
+                                                                                           
+    for chcnt in range(n_ch):
+        data_by_ch[:, :, chcnt] = (data4d * det_resp[chcnt]).mean((2, 3))
+    return data_by_ch
+
+def generate_indices(labels_shape, batch_size, method = 'class_based'):
+    """
+    Generate indices for sampling data while ensuring specific class coverage requirements.
+
+    Parameters
+    ----------
+    labels_shape : tuple
+        A tuple `(n_classes, n_sample_per_class)` where:
+        - `n_classes` is the number of classes.
+        - `n_sample_per_class` is the number of samples available for each class.
+
+    batch_size : int
+        The number of samples per batch. Must evenly divide `n_classes`.
+
+    method : str, optional
+        The method to generate indices. Options are:
+        - `'random'`: Randomly shuffle all indices and group them into batches.
+        - `'class_based'`: Ensures each batch contains a balanced distribution of class indices,
+          and consecutive samples attempt to provide broad class coverage.
+        Default is `'class_based'`.
+
+    Returns
+    -------
+    samples : ndarray
+        A 2D NumPy array of shape `(n_batches, batch_size)`, where `n_batches` is the total
+        number of batches. Each row contains indices representing a batch of samples.
+
+    Raises
+    ------
+    AssertionError
+        If `n_classes` is not a multiple of `batch_size`.
+
+    Notes
+    -----
+    - For the `'random'` method, indices are shuffled globally before grouping into batches.
+    - For the `'class_based'` method, samples are shuffled within each class, and batches
+      are generated such that each group of `batch_size` indices maintains balance across classes.
+
+    Examples
+    --------
+    Generate indices with class-based sampling:
+    >>> labels_shape = (52, 100)  # 52 classes, 100 samples per class
+    >>> batch_size = 4
+    >>> samples = generate_indices(labels_shape, batch_size, method='class_based')
+    >>> samples.shape
+    (1300, 4)  # Total batches: (52*100) / 4 = 1300
+
+    Generate indices with random sampling:
+    >>> samples = generate_indices(labels_shape, batch_size, method='random')
+    >>> samples.shape
+    (1300, 4)
+    """
+    n_classes, n_sample_per_class = labels_shape
+    n_groups_of_classes = n_classes // batch_size
+    assert n_classes // batch_size == n_classes / batch_size, \
+        'n_classes must be a product of batch_size'
+    total_points = n_classes * n_sample_per_class
+    n_samples = total_points // batch_size
+    indices = np.arange(total_points)
+    
+    if method == 'random':
+        np.random.shuffle(indices)
+        samples = indices.reshape((n_samples // batch_size, batch_size))
+    elif method == 'class_based':
+        print('class based shuffling of data')
+        indices = indices.reshape(labels_shape)
+        for inds_cnt , inds in enumerate(indices):
+            np.random.shuffle(inds)
+            indices[inds_cnt] = inds.copy()
+        indices = indices.swapaxes(0, 1)
+        samples = np.zeros((n_samples, batch_size), dtype=int)
+        
+        for sample_cnt in range(len(indices)):
+            bunch_of_samples = indices[sample_cnt]
+            np.random.shuffle(bunch_of_samples)
+            for gcnt in range(n_groups_of_classes):
+                if gcnt == 0:
+                    samples[sample_cnt*n_groups_of_classes] = \
+                        bunch_of_samples[:batch_size]
+                elif gcnt == n_groups_of_classes - 1:
+                    samples[sample_cnt*n_groups_of_classes + gcnt] = \
+                        bunch_of_samples[-batch_size:]
+                else:
+                    samples[sample_cnt*n_groups_of_classes + gcnt] = \
+                        bunch_of_samples[gcnt * batch_size: (gcnt + 1) * batch_size]
+        
+    return samples
