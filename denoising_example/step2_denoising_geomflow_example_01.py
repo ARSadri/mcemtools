@@ -7,15 +7,30 @@ noisy.npy must give a 4D dataset larger than (2*n_prob+1, 2*n_prob+1, 16, 16)
 you will set the n_prob in hyps_I4D below
 The output log directory will be made right beside the ref directory.
 
-| logs_root
+| log_dir
 |---- ref
 |-------- noisy.npy
-|-------- nonoise.npy (optional)
+|-------- nonoise.npy (optional for comparison)
 |---- output_dir (will be made here)
 
 """
 
-noisy4D_fpath = './../../mcemtools_logs/EFSTEM_TiPost_463eV_10eVSlit/ref/noisy.npy'
+if 1: #if you used the script of step 1 to generate some dataset, then the following may help
+    import numpy as np
+    nonoise4D_fdir = pathlib_Path(r'pyms_data/SrTiO3_3\SrTiO3_3_th_240.0_df_0_tilt_0_0')
+    nonoise4D_fpath = nonoise4D_fdir / 'data4d.npy'
+    nonoise = np.load(nonoise4D_fpath) * 256
+    noisy = mcemtools.data.np_random_poisson_no_zeros(nonoise)
+    ref_dir = nonoise4D_fdir / 'den/ref'
+    ref_dir.mkdir(parents = True, exist_ok = True)
+    nonoise_fpath = ref_dir / 'nonoise.npy'
+    np.save(nonoise_fpath, nonoise)
+    noisy4D_fpath = ref_dir / 'noisy.npy'
+    np.save(noisy4D_fpath, noisy)
+else:
+    noisy4D_fpath = pathlib_Path(r'your_noisy_dot_npy_file_in_a_ref_in_a_logs_directory')
+
+#~~~~~~~~~~~~~~~~~~ START ~~~~~~~~~~~~~~~~~
 
 noisy4D_fpath = pathlib_Path(noisy4D_fpath)
 assert noisy4D_fpath.is_file(), f'File not found!'
@@ -49,6 +64,9 @@ hyps_I4D = dict(
     use_mu_eaxct            = False,
     rejection_ratio_list    = [70, 60, 50, 0],
     refine_by_labels        = True,
+    repeat_by_scattering    = None,
+    trainable_area          = None,
+    PACBED_mask             = None,
     )
 
 mcemtools.denoise.denoise4_unet.denoise4D_unet(logs_root, hyps_I4D)

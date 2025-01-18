@@ -840,8 +840,8 @@ def upsample_4d_data(data4d, xlen, ylen, alpha, Knought, npixout, npiyout):
     data4d = data4d.reshape(data4d_shape[0], data4d_shape[1], -1)
     data4d_upsampled = np.zeros(
         (npiyout, npixout, data4d.shape[2]), dtype=data4d.dtype)
-
-    for pix_cnt in printprogress(range(data4d.shape[2])):
+    
+    for pix_cnt in range(data4d.shape[2]):
         data4d_upsampled[:, :, pix_cnt] = stem_image_nyquist_interpolation(
             StemImage=data4d[:, :, pix_cnt].copy(), 
             xlen=xlen, ylen=ylen, alpha=alpha, Knought=Knought, 

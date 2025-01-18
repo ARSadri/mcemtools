@@ -59,7 +59,7 @@ def annular_mask(image_shape : tuple,
         if in_radius is None:
             radius = np.floor(np.minimum(*centre))
         else:
-            radius_ = np.inf
+            radius = np.inf
 
     dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 
@@ -93,6 +93,8 @@ def crop_or_pad(data, new_shape, padding_value = 0, shift = None):
     """
     data_shape = data.shape
     data_is_torch = is_torch(data)
+    if data_is_torch:
+        import torch
     assert len(data_shape) == len(new_shape), \
         'put np.ndarray a in b, the length of their shapes should be the same.' \
         f'currently, data shape is {data_shape} and new shape is {new_shape}'

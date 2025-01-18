@@ -146,3 +146,7 @@ History
 0.9.9 (2024-12-19)
 -------------------
 * CapsNet is complete
+
+0.9.10 (2025-01-18)
+-------------------
+* Denoising examples become consistant with current pyms version

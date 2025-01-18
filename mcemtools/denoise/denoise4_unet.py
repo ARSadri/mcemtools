@@ -950,10 +950,19 @@ def denoise4D_unet(
     n_x, n_y, n_r, n_c = data4D_shape
     logger(f'Orginal data4D shape: {data4D_shape}')
     
-    PACBED_mask = hyps_I4D['PACBED_mask']
+    if 'PACBED_mask' in hyps_I4D:
+        PACBED_mask = hyps_I4D['PACBED_mask']
+    else:
+        PACBED_mask = None
+        
     if PACBED_mask is None:
         PACBED_mask = np.ones((n_r, n_c))
-    trainable_area = hyps_I4D['trainable_area']
+    if 'trainable_area' in hyps_I4D:
+        trainable_area = hyps_I4D['trainable_area']
+    else:
+        trainable_area = None
+        
+        
     if trainable_area is None:
         trainable_area = np.ones((n_x, n_y))
     
@@ -1106,7 +1115,7 @@ def denoise4D_unet(
         if hyps_I4D['rejection_ratio_list'] is None:
             rejection_ratio = 0
         else:
-            assert len(refine_step_list) == len(hyps_I4D['rejection_ratio_list']), \
+            assert len(refine_step_list) <= len(hyps_I4D['rejection_ratio_list']), \
                 'if not None, the length of rejection_ratio_list should be the same as n_refine_steps.'
             rejection_ratio = hyps_I4D['rejection_ratio_list'][refine_step]
         

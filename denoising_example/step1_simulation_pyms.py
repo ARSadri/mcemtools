@@ -1,380 +1,241 @@
-import sys
 import pathlib
-import pyms
-
-from pyms.py_multislice import (get_STEM_raster)
-
-import numpy as np
-import matplotlib.pyplot as plt
 import torch
-from lognflow import lognflow, printprogress, plt_colorbar, logviewer
-from lognflow.plt_utils import imshow_series, plt_imshow
-# from multiprocessing import freeze_support
+import pyms
+import utils
+from copy import copy
+from pyms.Probe import aberration
+from itertools import product
 import mcemtools
-
-from scipy import ndimage 
+from lognflow import lognflow, printprogress, printv
+from lognflow.plt_utils import (
+    np, plt, plt_imshow, plt_colorbar, plt_contours, plt_imhist)
 
 if __name__ == '__main__':
-    # freeze_support()
-    # Get crystal
-    
-    # crystal = pyms.structure.fromfile('Structures/SrTiO3_CeO2_interface.xyz')
-    
-    # A few maniupulations to remove vaccuum at edges and create a 
-    # structure psuedo-periodic
-    # crystal = crystal.resize([[0.1,0.76]],axis=[0])
-    # crystal = crystal.concatenate(crystal.resize([[0.017,0.99]],
-    #                                     axis=[0]).reflect([0]),axis=0)
-    
-    # Output structure for examination in Vesta 
-    # crystal.output_vesta_xtl('manipulated_SrTiO3_CeO2_interface.xtl')
-    # tiling = [1,7]
-    
-    # Note that we have to be careful that we specify the units of
-    # the atomic coordinates (cartesian in this case not the default fractional units)
-    # and the temperature factor units (root mean squared displacement - urms)
-    # crystal = pyms.structure.fromfile('Structures/SrTiO3.xyz',atomic_coordinates='fractional',temperature_factor_units='ums')
-    
-    # Set up thickness series
-    
-    thicknesses_list = np.array([[240]])#np.array([[40], [80], [120], [160], [200], [240]])
-        
-    # Grid size in pixels
-    # If you're doing the SrTiO3-CeO2 interface then  for converged, 
-    # publication-quality results this gridshape should be doubled
-    gridshape = [1024, 1024]
-    
-    # Probe accelerating voltage in eV
-    eV = 300e3
-    
-    # If only 4D-STEM is requested set detectors to be None
-    # detectors = None
-    
-    # Number of frozen phonon passes
-    # Number typically required for a converged experiment
-    # nfph = 25
-    # Run absorptive calculation instead
-    nfph = 1
-    nT=0
-    
-    np.random.seed(0)
-    torch.manual_seed(0)
-    # 4D-STEM options:
-    
-    # 4D-STEM with diffraction pattern sizing set by
-    # multislice grid
-    # FourDSTEM = True
-    
-    # 4D-STEM with diffraction patterns cropped to
-    # 128x128 pixel readout
-    
-    # Option for more control over the device which performs the 
-    # calculation.
-    # GPU (CUDA) calculation
+    data_root = pathlib.Path(r'./pyms_data')
+    seed = 0
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     device = torch.device('cuda')
-    # Run calculation on your computer's second GPU
-    # device = torch.device('cuda:1')
-    # CPU only calculation
-    # device = torch.device('cpu')
-    # ROI=[0.0, 0.0,1, 1]
-    # scan_posn = pyms.py_multislice.generate_STEM_raster(
-    #                 real_dim, eV, app, tiling=tiling, ROI=ROI)
-    tilings_list         = [[2, 2]]
-    materials_fname_list = ['SrTiO3']
-    materials_name_list  = ['SrTiO3_3']
-    FourDSTEM = [[18, 18]]
-    prob_spacing_default_list = [3.905/4]#[8.72]
-    n_probes = (256, 256)
-    n_spacing_list = np.array([1])#np.arange(1, 17).astype('int')
-    app_list = [19]#np.floor(np.linspace(1.79, 21.4, 10)*100)/100
-    df_list = np.array([float(-50)])#, float(probe_spacing/(app/1000.0))]
+    GPU_streaming = False
+    CFG_absorptive = True
+    if CFG_absorptive:
+        nfph = 1
+        nT   = 0
+    else:
+        nfph = 20
+        nT   = 2 * nfph
+    gridshape         = [1024, 1024]
+    eV                = 300e3
+    thicknesses_list  = [[240]]
+    tiling            = [4, 4]
+    materials_fname   = 'SrTiO3'
+    material_name     = 'SrTiO3_3'
+    FourD_STEM        = [[32, 32]]
+    n_probes          = (32, 32)
+    probe_spacing     = 0.25
     
-    data_root = pathlib.Path(r'./../mcemtools_data/')
-    magpot_logger = lognflow(log_dir = data_root / r'magpot', time_tag = False)
-    
-    CoM_label = None
-    labels_data = None
-    stem_label = None
-    stem_mask = None
-    batch_size = 64
-    Ne = 0
-    
-    n_epochs = 1
-    
-    if(0):
-        ...
-    elif(0):
-        def read_bin(fpath):
-            return np.fromfile(fpath,dtype=np.float64).reshape(942, 942)
-        
-        logger_labels = lognflow(
-            log_dir = data_root / 'aFe2O3_CoM_data' )
-        CoM_label = logger_labels.get_stack_from_files(
-            'Main_*_942_942.bin', read_func = read_bin)
-        vmin = CoM_label[0].min()
-        for _ in range(3):
-            DF = CoM_label[_].copy()
-            DF = ndimage.rotate(DF, -91, reshape=False)
-            DF = np.flip(DF, axis = 1)
-            CoM_label[_] = DF.copy()
-        # CoM_label = CoM_label[:, 64+12:128-20, 16+5:80-27]
-        CoM_label = CoM_label[:, 64+5:64+5+n_probes[0], 16+1:16+1+n_probes[1]]
-        n_probes
-        stem_label = CoM_label[0].copy()
-        
-        stem_label /= stem_label.mean()
-        stem_label = 1 - stem_label #it is DF
-        
-        CoM_label = CoM_label[1:].copy()
+    app               = 19
+    df_list           = [0]
+    DF_radius         = 8
+    BF_radius         = 7
 
-        CoM_label = CoM_label.swapaxes(0, 1).swapaxes(1, 2)
-        print(f'stem_label shape: {stem_label.shape}')
-        print(f'CoM_label shape: {CoM_label.shape}')
+    spatInc = None
 
-        # im = plt_imshow(stem_label, vmin = vmin); plt.show(); exit()
-        batch_size = 16
-        # n_epochs = 100
+    aberrations     = []
+    # aberrations.append(aberration("C10", "C1", "Defocus          ", 1, 0.0, 1, 0))
+    # aberrations.append(aberration("C12", "A1", "2-Fold astig.    ", 0, 0, 1, 2))
+    # aberrations.append(aberration("C23", "A2", "3-Fold astig.    ", 0, 0, 2, 3))
+    # aberrations.append(aberration("C21", "B2", "Axial coma       ", 0, 0, 2, 1))
+    # aberrations.append(aberration("C30", "C3", "3rd order spher. ", 0, 0, 3, 0))
+    
+    # aberrations.append(aberration("C34", "A3", "4-Fold astig.    ", 0.0, 0.0, 3, 4))
+    # aberrations.append(aberration("C32", "S3", "Axial star aber. ", 0.0, 0.0, 3, 2))
+    # aberrations.append(aberration("C45", "A4", "5-Fold astig.    ", 0.0, 0.0, 4, 5))
+    # aberrations.append(aberration("C43", "D4", "3-Lobe aberr.    ", 0.0, 0.0, 4, 3))
+    # aberrations.append(aberration("C41", "B4", "4th order coma   ", 0.0, 0.0, 4, 1))
+    # aberrations.append(aberration("C50", "C5", "5th order spher. ", 0.0, 0.0, 5, 0))
+    # aberrations.append(aberration("C56", "A5", "6-Fold astig.    ", 0.0, 0.0, 5, 6))
+    # aberrations.append(aberration("C52", "S5", "5th order star   ", 0.0, 0.0, 5, 2))
+    # aberrations.append(aberration("C54", "R5", "5th order rosette", 0.0, 0.0, 5, 4))
+    
+    # specimen_tilt_list = list(product([-4, 0, 4], [-4, 0, 4]))
+    specimen_tilt_list = [[0, 0]]
+    
+    xyz_file = pathlib.Path(f'{materials_fname}.xyz')
+    crystal = pyms.structure.fromfile(
+        str(xyz_file), atomic_coordinates='fractional', 
+        temperature_factor_units='ums')
+    crystal_original = copy(crystal)
 
-    elif(0):
-        logger_labels = lognflow(
-                log_dir = data_root / 'aFe2O3_CoM_recon' )
-        labels_data = logger_labels.get_single(
-            'elec_True_mag_True_ps_0.10_th_760_app_20_synth/data.npy')
-        
-        labels_data = labels_data[:n_probes[0], :n_probes[1]]
-        batch_size = 16
+    nslices = int(np.ceil(crystal.unitcell[2]/1.9525))
+    subslices = np.linspace(1.0/nslices,1.0,nslices)
+    nsubslices = len(subslices)
+    # subslices = np.array([1.0])
     
-    # import RobustGaussianFittingLibrary as rgflib
-    # stem = labels_data.sum((2, 3))
-    # mp = rgflib.fitValue(stem.ravel())
-    # atoms_mask = mcemtools.remove_islands_by_size(stem < mp[0] - 2 * mp[1], 6)
-    #
-    # import scipy.ndimage
-    # atoms_extent = scipy.ndimage.binary_erosion(atoms_mask)
-    # atoms_extent = scipy.ndimage.binary_dilation(atoms_mask, iterations = 2)
-    # stem_mask = atoms_extent - atoms_mask
-    # stem_mask = stem_mask.astype('float32')
-    # stem_mask[stem_mask < 0.01] = 0.015
-    # # logger_labels.log_imshow('stem_mask', stem_mask, time_tag = False); exit()
+    object_real_size = crystal.unitcell[:2] * np.asarray(tiling)
     
+    printv(object_real_size)
+    
+    scan_posn = utils.get_STEM_raster(
+        object_real_size = object_real_size,
+        n_probes = n_probes,
+        probe_spacing = probe_spacing, 
+        )
+    printv(scan_posn)
+
+    if 1:
+        batch_size = 8
+        Ne         = 0
+        n_epochs   = 1
+        det_geo    = None
+     
+    thicknesses = thicknesses_list[0]
+    specimen_tilt = specimen_tilt_list[0]
+    df = df_list[0]
+    printv(df)
+    printv(specimen_tilt)
+    printv(thicknesses)
+    print('='*20, flush = True)
+    crystal = copy(crystal_original)
+    exp_name =  f'{material_name}/{material_name}'
+    # exp_name += f'_ps_{probe_spacing:02.02f}'
+    exp_name += f'_th_{thicknesses[0]:.1f}'
+    # exp_name += f'_app_{app}'
+    exp_name += f'_df_{df}'
+    # if (specimen_tilt[0] != 0) | (specimen_tilt[1] != 0):
+    exp_name += f'_tilt_{specimen_tilt[0]}_{specimen_tilt[1]}'
     if Ne > 0:
-        labels_data = np.random.poisson(labels_data * Ne) / Ne
+        exp_name += f'_Ne_{Ne}' 
+    if spatInc is not None:
+        spatinc_value = float(spatInc['s1']*probe_spacing)
+        exp_name += f'_spat_{spatinc_value:.1f}'
+    # if nfph > 1:
+    #     exp_name += f'_nfph_{nfph}'
+    # if not backprop:
+    #     exp_name += f'_no_opt'
+    # exp_name += f'_detsz_{det_geo_size}'
+    logger = lognflow(log_dir = data_root / exp_name, time_tag = False)
+    logger.log_code()
+    logger.copy(xyz_file.name, xyz_file)
 
+    fig, ax = utils.plot_scan_positions(
+        atoms_xyz = crystal.atoms[:, :3],
+        atoms_Z = crystal.atoms[:, 3],
+        unitcell = crystal.unitcell,
+        object_real_size = object_real_size,
+        probe_spacing = probe_spacing,
+        scan_posn = scan_posn,
+        markersize = 0.4,
+        atom_markersize = 8,
+        text_size = 1)
+
+    logger.savefig('ROI', dpi = 2000)
+    logger.save('object_real_size.txt', object_real_size)
+    logger.save('scan_posn', scan_posn)
+
+    data4d = logger.load('data4d.npy')
     
-    # labels_data_elec = np.load(data_root / 
-    #     r'alphaFe2O3_n1n120\elec_True_mag_False_ps_0.25_th_120_app_21.4\data.npy')
-    # mcemtools.viewer_4D(labels_data - labels_data_elec, logger = logger_labels); exit()
-    # labels_data = None
-    
-    CBED_00_all = []
-    CBED_11_all = []
-    subtracted_all = []
-    thickness_all = []
-    FLAG_make_pot_mag_all = []
-    FLAG_make_pot_elec_all = []
-    for material_name, materials_fname, tiling, prob_spacing_default in zip(
-        materials_name_list, materials_fname_list,
-        tilings_list, prob_spacing_default_list):
-    
-        xyz_file = pathlib.Path(f'Structures/{materials_fname}.xyz')
+    if (data4d is None) | 0:
         
-        crystal = pyms.structure.fromfile(
-            str(xyz_file), atomic_coordinates='fractional', 
-            temperature_factor_units='ums')
-        print(crystal.unitcell)
-        # Subslicing of crystal for multislice
-        nslices = int(np.ceil(crystal.unitcell[2]/1.9525))
-        subslices = np.linspace(1.0/nslices,1.0,nslices)
-        nsubslices = len(subslices)
-        # subslices = np.array([1.0])
-        
-        object_scan_size = [
-            n_probes[0] * prob_spacing_default * n_spacing_list.max(), 
-            n_probes[1] * prob_spacing_default * n_spacing_list.max()]
-        object_real_size = crystal.unitcell[:2] * np.asarray(tiling)
-        print(f'object_scan_size: {object_scan_size}, '
-              f'object_real_size: {object_real_size}')
-        for cpeccnt, n_spacings in enumerate(n_spacing_list):
-            result = None
-            
-            probe_spacing = n_spacings * prob_spacing_default
+        result = pyms.STEM_multislice(
+            crystal,
+            gridshape,
+            eV,
+            app,
+            thicknesses,
+            batch_size      = batch_size,
+            subslices       = subslices,
+            device_type     = device,
+            df              = df,
+            nfph            = nfph,
+            nT              = nT,
+            FourD_STEM      = FourD_STEM,
+            PACBED          = None,
+            STEM_images     = None,
+            tiling          = tiling,
+            detector_ranges = None,
+            scan_posn       = scan_posn,
+            seed            = None,
+            specimen_tilt   = specimen_tilt,
+            aberrations     = aberrations,
+            )
     
-            # scan_posn = get_STEM_raster(
-            #     object_scan_size = object_scan_size,
-            #     object_real_size = object_real_size,
-            #     probe_spacing = probe_spacing, 
-            #     n_probes = n_probes,
-            #     probe_spacing_noise_std = 0)
+        data4d = result['datacube']
+        logger.save('data4d', data4d, time_tag = False)
+        
+    if 1:
+        logger.imshow('data4d_fft2', 
+                      np.log(np.abs(np.fft.fftshift(np.fft.fft2(data4d.sum((2, 3)))))**2))
 
-            ROI_shift_0_to_1 = ((64+12)*probe_spacing/object_real_size[0],
-                                (16+5)*probe_spacing/object_real_size[1])
+        comx, comy = mcemtools.centre_of_mass_4D(data4d)
+        com = comx + 1j * comy
+        logger.imshow(f'com_complex', com, cmap = 'complex')
+        logger.imshow(f'com_abs_angle', com)
+        logger.imshow(f'com_real_imag', com, cmap = 'real_imag')
+        s, p = mcemtools.sum_4D(data4d)
+        sym_stem = s.copy()
+        logger.imshow(f'STEM', s)
+        logger.imshow(f'PACBED', p)
+        
+        mask2d = mcemtools.annular_mask((data4d.shape[2], data4d.shape[3]), in_radius = DF_radius, radius = np.inf)
+        mask4d = mcemtools.mask2D_to_4D(mask2d, data4d.shape)
+        s, p = mcemtools.sum_4D(data4d, mask4d)
+        logger.imshow(f'STEM_DF', s)
+        logger.imshow(f'PACBED_DF', p)
+        
+        logger(f'FourD_STEM:{FourD_STEM}')
+        logger(f'data4d.shape:{data4d.shape}')
+        frame = mcemtools.data4D_to_frame(data4d[:8,:8])
+        bfmask2d = mcemtools.annular_mask(
+            (data4d.shape[2], data4d.shape[3]), radius = BF_radius)
+        mask4d = mcemtools.mask2D_to_4D(bfmask2d, data4d.shape)
+        s, p = mcemtools.sum_4D(data4d, mask4d)
+        logger.imshow(f'STEM_BF', s)
+        logger.imshow(f'PACBED_BF', p)
+        vmin = data4d[:, :, bfmask2d == 1].min()
+        vmax = data4d[:, :, bfmask2d == 1].max()
+        logger.imshow('frame', frame, dpi = 1000, colorbar = False,
+                      vmin = vmin, vmax = vmax)
 
-            scan_posn = get_STEM_raster(
-                object_real_size = object_real_size,
-                probe_spacing = probe_spacing, 
-                n_probes = n_probes,
-                )
-                # ROI_shift_0_to_1 = ROI_shift_0_to_1)
-            
-            scan_posn_perfect = get_STEM_raster(
-                object_real_size = object_real_size,
-                probe_spacing = probe_spacing)
-            
-            scan_posn_tiling = get_STEM_raster(
-                object_real_size = object_real_size,
-                probe_spacing = (crystal.unitcell[0], crystal.unitcell[1]))
-            
-            n_spacings_str = '%02d'%n_spacings
-            probe_spacing_str = '%02.02f'%probe_spacing
-                
-            # Probe defocus, an array can be provided for a defocus series
-            for df in df_list:
-                for app in app_list:
-                    for thicknesses in thicknesses_list:
-                        for FLAG_make_pot_mag, FLAG_make_pot_elec in zip(
-                                # [True, False], [True, True]):
-                                # [True, False, True], [True, True, False]):
-                                [False], [True]):
-                            exp_name =  f'{material_name}'
-                            exp_name += f'/elec_{FLAG_make_pot_elec}'
-                            exp_name += f'_mag_{FLAG_make_pot_mag}'
-                            exp_name += f'_ps_{probe_spacing_str}'
-                            exp_name += f'_th_{thicknesses[0]}'
-                            exp_name += f'_app_{app}'
-                            exp_name += f'_df_{df}'
-                            if Ne > 0:
-                                exp_name += f'_Ne_{Ne}' 
-                            logger = lognflow(
-                                log_dir = data_root / exp_name, time_tag = False)
-                            
-                            # print('Max resolution permitted by the sample grid is {0} mrad'.format(
-                            #     pyms.max_grid_resolution(gridshape,real_dim,eV=eV)))
-                            # _nyquist_probe_spacing = nyquist_probe_spacing(eV=eV, alpha = app)
-                            # logger(f'nyquist probe spacing is: {_nyquist_probe_spacing}')
-                            # logger(f'Your probe spacing: {probe_spacing}')
-                            
-                            if stem_label is not None:
-                                logger.log_imshow('label/DF_label', stem_label)
-                            if CoM_label is not None:
-                                logger.log_imshow('label/CoM_label_complex',
-                                    CoM_label[..., 0] + 1j * CoM_label[..., 1], cmap = 'complex')
-                                logger.log_imshow('label/CoM_label_abs_angle',
-                                    CoM_label[..., 0] + 1j * CoM_label[..., 1])
-                                logger.log_imshow('label/CoM_label_x_y',
-                                    CoM_label[..., 0] + 1j * CoM_label[..., 1], 
-                                    complex_type = 'real_imag')
-                            fig = plt.figure(figsize = (8, 8))
-                            ax = fig.add_subplot(111)
-                            ax.plot(scan_posn_perfect[..., 0].ravel() * object_real_size[0], 
-                                    scan_posn_perfect[..., 1].ravel() * object_real_size[1], '.', 
-                                    label = 'object')
-                            ax.plot(scan_posn[..., 0].ravel() * object_real_size[0], 
-                                    scan_posn[..., 1].ravel() * object_real_size[1], '.', 
-                                    color = 'red', label = 'ROI')
-                            ax.plot(scan_posn_tiling[..., 0].ravel() * object_real_size[0], 
-                                    scan_posn_tiling[..., 1].ravel() * object_real_size[1], 'x',
-                                    color = 'green', label = 'unit cell')
-                            ax.set_aspect('equal', 'box')
-                            plt.legend()
-                            # plt.show(); exit()
-                            logger('plot ready')
-                    
-                            fpath = logger.log_plt('ROI', dpi = 1000)
-                            
-                            logger(fpath)
-                    
-                            fpath = logger.log_single('object_real_size.txt', object_real_size)
-                    
-                            logger(fpath)
-                    
-                            fpath = logger.copy('code.py', sys.argv[0])
-                            logger(fpath)
-                            
-                            fpath = logger.log_single('scan_posn_perfect', scan_posn_perfect)
-                            logger(fpath)
-                            fpath = logger.log_single('scan_posn', scan_posn)
-                            logger(fpath)
-                            fpath = logger.log_single('scan_posn_tiling', scan_posn_tiling)
-                            logger(fpath)
-                            
-                            detectors = [[0,app/2], [app/2,app],[70,150]]
+    # I choose 1 because the probe spacing is 0.25A which will be the std of
+    # spatial incoherence of 0.25A.
+    # I found out by calculation that the Tokyo Uni 4DSTEM machine (presented in the 
+    # anti-ferromagnetic Nature paper) introduces 0.4A spatial incoherence.)
+    spatInc = dict(model = 'Gaussian_Lorentzian', angle = 0,
+                   s1 = 1, s2 = 1, gamma_x = 1, gamma_y = 1) 
+     
+    if spatInc is not None:
+        data4d = mcemtools.analysis.spatial_incoherence_4D(data4d, spatInc).astype('float32')
+        logger.save(f'spatInc/spatInc', spatInc)
+        logger.save(f'spatInc/data', data4d)
+        
+        comx, comy = mcemtools.centre_of_mass_4D(data4d)
+        com = comx + 1j * comy
+        logger.imshow(f'spatInc/com_complex', com, cmap = 'complex')
+        logger.imshow(f'spatInc/com_abs_angle', com)
+        logger.imshow(f'spatInc/com_real_imag', com, cmap = 'real_imag')
+        s, p = mcemtools.sum_4D(data4d)
+        sym_stem = s.copy()
+        logger.imshow(f'spatInc/STEM', s)
+        logger.imshow(f'spatInc/PACBED', p)
 
-                            crystal = pyms.structure.fromfile(str(xyz_file),
-                                      atomic_coordinates='fractional',
-                                      temperature_factor_units='ums')
-                            data4d = logger.logged.get_single('data')
-                            if(data4d is None):
-                                kwargs_dev = dict(
-                                    magpot_logger = None,
-                                    logger = logger,
-                                    FLAG_make_pot_elec = FLAG_make_pot_elec,
-                                    FLAG_make_pot_mag = FLAG_make_pot_mag,
-                                    lr = None,
-                                    betas = None,
-                                    n_epochs = 1,
-                                    labels_data = None,
-                                    stem_mask = None,
-                                    stem_label = None,
-                                    CoM_label = None,
-                                    backprop = False,
-                                    det_geo = None,
-                                    )
-                                result = pyms.STEM_multislice(
-                                    crystal,
-                                    gridshape,
-                                    eV,
-                                    app,
-                                    thicknesses,
-                                    batch_size = batch_size,
-                                    subslices=subslices,
-                                    device_type=device,
-                                    df=df,
-                                    nfph=nfph,
-                                    nT=nT,
-                                    FourD_STEM=FourDSTEM,
-                                    PACBED=None,
-                                    STEM_images=None,
-                                    tiling=tiling,
-                                    detector_ranges=None,
-                                    scan_posn = scan_posn,
-                                    kwargs_dev = kwargs_dev,
-                                    seed = np.arange(1000, dtype='int'),
-                                    )
-                                data4d = result['datacube'][:, :, 1:-1, 1:-1]
-                                # data4d.sum().backward()
-                                
-                                try:
-                                    data4d = data4d.detach().cpu().numpy().astype('float32')
-                                except:
-                                    pass
-                                n_r = data4d.shape[-1]
-                                data4d = mcemtools.bin_4D(data4d, 1, 1)
-                                logger.log_single(f'data', data4d)
-                            comx, comy = mcemtools.centre_of_mass_4D(data4d)
-                            com = comx + 1j * comy
-                            logger.log_imshow(f'com_complex', com, cmap = 'complex')
-                            logger.log_imshow(f'com_abs_angle', com, complex_type = 'abs_angle')
-                            logger.log_imshow(f'com_real_imag', com, complex_type = 'real_imag')
-                            s, p = mcemtools.sum_4D(data4d)
-                            logger.log_imshow(f'STEM', s)
-                            logger.log_imshow(f'PACBED', p)
-                            
-                            mask2d = mcemtools.annular_mask(
-                                (data4d.shape[2], data4d.shape[3]), in_radius = 32)
-                            mask4d = mcemtools.mask2D_to_4D(mask2d, data4d.shape)
-                            s, p = mcemtools.sum_4D(data4d, mask4d)
-                            logger.log_imshow(f'STEM_DF', s)
-                            logger.log_imshow(f'PACBED_DF', p)
-                            
-                            logger(f'FourDSTEM:{FourDSTEM}')
-                            logger(f'data4d.shape:{data4d.shape}')
-                            frame = mcemtools.data4D_to_frame(data4d)
-                            bfmask2d = mcemtools.annular_mask(
-                                (data4d.shape[2], data4d.shape[3]), radius = 16)
-                            vmin = data4d[:, :, bfmask2d == 1].min()
-                            vmax = data4d[:, :, bfmask2d == 1].max()
-                            logger.log_imshow(
-                                'frame', frame, dpi = 2000, colorbar = False,
-                                vmin = vmin, vmax = vmax)
-                            logger('probe spacing generated')
-                            print('cuda test passed')
+        mask2d = mcemtools.annular_mask(
+            (data4d.shape[2], data4d.shape[3]), in_radius = DF_radius)
+        mask4d = mcemtools.mask2D_to_4D(mask2d, data4d.shape)
+        s, p = mcemtools.sum_4D(data4d, mask4d)
+        logger.imshow(f'spatInc/STEM_DF', s)
+        logger.imshow(f'spatInc/PACBED_DF', p)
+
+        logger(f'spatInc FourD_STEM:{FourD_STEM}')
+        logger(f'spatInc data4d.shape:{data4d.shape}')
+        frame = mcemtools.data4D_to_frame(data4d[:8,:8])
+        bfmask2d = mcemtools.annular_mask(
+            (data4d.shape[2], data4d.shape[3]), radius = BF_radius)
+        mask4d = mcemtools.mask2D_to_4D(bfmask2d, data4d.shape)
+        s, p = mcemtools.sum_4D(data4d, mask4d)
+        logger.imshow(f'spatInc/STEM_BF', s)
+        logger.imshow(f'spatInc/PACBED_BF', p)
+        vmin = data4d[:, :, bfmask2d == 1].min()
+        vmax = data4d[:, :, bfmask2d == 1].max()
+        logger.imshow('spatInc/frame', frame, dpi = 1000, colorbar = False,
+                      vmin = vmin, vmax = vmax)
