@@ -93,7 +93,106 @@ def Gaussian_2dkernel(filter_size, s1=1, s2=1, angle=0):
     
     return kern2d / kern2d.sum()
 
-def spatial_incoherence_4D(data4d, spatInc_params, use_fft = True, return_filter = False):
+def spatial_incoherence_4D(data4d, spatInc_params, return_filter = False):
+    """
+    Apply spatial incoherence filtering to 4D-STEM data using Gaussian and/or Lorentzian filters.
+
+    Parameters:
+    -----------
+    data4d : ndarray
+        Input 4D dataset of shape (n_x, n_y, n_r, n_c), where:
+        - n_x, n_y: Spatial dimensions.
+        - n_r, n_c: Detector dimensions.
+    spatInc_params : dict
+        Parameters for the spatial incoherence filter. Expected keys include:
+        - 'model' : str or list of str
+            Specifies the filter type(s) to apply. Options are 'Gaussian', 'Lorentzian', or both.
+        - 's1', 's2' : float, optional
+            Parameters for the Gaussian filter (e.g., standard deviations along principal axes).
+        - 'gamma_x', 'gamma_y' : float, optional
+            Parameters for the Lorentzian filter (e.g., scale factors along principal axes).
+        - 'angle' : float, optional
+            Rotation angle for the filters (applies to both Gaussian and Lorentzian filters).
+    use_fft : bool, optional
+        If True, performs the filtering in Fourier space for efficiency. 
+        If False, performs the filtering in real space. Default is False.
+
+    Returns:
+    --------
+    filtered_data4d : ndarray
+        The filtered 4D dataset, of the same shape as the input `data4d`.
+
+    Notes:
+    ------
+    - In the Fourier-space approach (`use_fft=True`), the combined filter is computed and applied 
+      in Fourier space for faster computation on large datasets.
+    - In the real-space approach (`use_fft=False`), the filtering is performed directly using 
+      window-based operations, which may be slower but avoids FFT artifacts.
+    - Filters are normalized before application to ensure the total weight is 1.
+    - If both 'Gaussian' and 'Lorentzian' models are specified in `spatInc_params['model']`, the 
+      filters are combined (summed) before normalization.
+
+    Example Usage:
+    --------------
+    >>> spatInc_params = {
+    >>>     'model': ['Gaussian', 'Lorentzian'],
+    >>>     's1': 1.5,
+    >>>     's2': 2.0,
+    >>>     'gamma_x': 0.8,
+    >>>     'gamma_y': 0.9,
+    >>>     'angle': 45
+    >>> }
+    >>> filtered_data = spatial_incoherence_4D(data4d, spatInc_params, use_fft=True)
+    """
+    n_x, n_y, n_r, n_c = data4d.shape
+    weight = spatInc_params['weight']
+    assert ((0 <= weight) & (weight <= 1)), \
+        'the weight between Gaussian and Lorentzian should be a number between 0 and 1'
+
+    if not 's1' in spatInc_params:
+        spatInc_params['s1'] = spatInc_params['s']
+        spatInc_params['s2'] = spatInc_params['s']
+        spatInc_params['angle'] = 0
+        spatInc_params['gamma_x'] = spatInc_params['gamma']
+        spatInc_params['gamma_y'] = spatInc_params['gamma']
+        
+    if not ('model' in spatInc_params):
+        spatInc_params['model'] = 'Gaussian'
+        weight = 1
+    
+    filter = np.zeros((n_x, n_y))
+    if 'Gaussian' in spatInc_params['model']:
+        gaussian_filter = Gaussian_2dkernel(
+            np.maximum(data4d.shape[0], data4d.shape[1]), 
+            spatInc_params['s1'], spatInc_params['s2'], spatInc_params['angle'])
+        gaussian_filter = mcemtools.masking.crop_or_pad(
+            gaussian_filter, (data4d.shape[0], data4d.shape[1]))
+        gaussian_filter = weight * gaussian_filter / gaussian_filter.sum()
+        from lognflow import plt_imshow
+        filter += gaussian_filter
+    else:
+        weight = 0
+    if 'Lorentzian' in spatInc_params['model']:
+        Lorentzian_filter = Lorentzian_2dkernel(
+            np.maximum(data4d.shape[0], data4d.shape[1]), 
+            spatInc_params['gamma_x'], spatInc_params['gamma_y'], spatInc_params['angle'])
+        Lorentzian_filter = mcemtools.masking.crop_or_pad(
+            Lorentzian_filter, (data4d.shape[0], data4d.shape[1]))
+        Lorentzian_filter = (1-weight) * Lorentzian_filter / Lorentzian_filter.sum() 
+        filter += Lorentzian_filter
+
+    data4d_ft = scipy.fft.fftn(data4d, axes=(0, 1))
+    filter_ft = scipy.fft.fftn(filter, s=(n_x, n_y))
+    result_ft = data4d_ft * filter_ft[:, :, None, None]
+    filtered_data4d = scipy.fft.ifftn(result_ft, axes=(0, 1)).real
+
+    if return_filter:
+        return filtered_data4d, filter
+    else:
+        return filtered_data4d
+
+def spatial_incoherence_4D_real(data4d, spatInc_params, use_fft = True, return_filter = False,
+                           weight = 1):
     """
     Apply spatial incoherence filtering to 4D-STEM data using Gaussian and/or Lorentzian filters.
 
@@ -148,17 +247,20 @@ def spatial_incoherence_4D(data4d, spatInc_params, use_fft = True, return_filter
 
     if not ('model' in spatInc_params):
         spatInc_params['model'] = 'Gaussian'
-
+        weight = 1
+    
     if use_fft:
         filter = np.zeros((n_x, n_y))
         if 'Gaussian' in spatInc_params['model']:
-            gaussian_filter = Gaussian_2dkernel(
+            gaussian_filter = weight * Gaussian_2dkernel(
                 np.maximum(data4d.shape[0], data4d.shape[1]), 
                 spatInc_params['s1'], spatInc_params['s2'], spatInc_params['angle'])
             filter += mcemtools.masking.crop_or_pad(
                 gaussian_filter, (data4d.shape[0], data4d.shape[1]))
+        else:
+            weight = 0
         if 'Lorentzian' in spatInc_params['model']:
-            Lorentzian_filter = Lorentzian_2dkernel(
+            Lorentzian_filter = (1-weight) * Lorentzian_2dkernel(
                 np.maximum(data4d.shape[0], data4d.shape[1]), 
                 spatInc_params['gamma_x'], spatInc_params['gamma_y'], spatInc_params['angle'])
             
@@ -580,11 +682,12 @@ def CoM_torch(data4D, mask4D = None, normalize = True,
 
     return CoMx.float(), CoMy.float(), row_grid_cube, clm_grid_cube
 
-def CoM_detector(det_geo):
-    cent_x, cent_y = scipy.ndimage.center_of_mass(det_geo > 0)
+def CoM_detector(det_resp):
+    n_ch, n_r, n_c = det_resp.shape
+    cent_x, cent_y = scipy.ndimage.center_of_mass(np.ones((n_r, n_c)))
     mask_coms = []
-    for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
-        mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_geo == label)
+    for cnt in range(n_ch):
+        mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_resp[cnt])
         mask_com_x -= cent_x
         mask_com_y -= cent_y
         mask_coms.append([mask_com_x, mask_com_y])
@@ -594,8 +697,8 @@ def CoM_channel_torch(data_per_ch, mask_coms):
     com_x_ch = []
     com_y_ch = []
     for cnt, mask_com in enumerate(mask_coms):
-        com_x_ch.append(data_per_ch[:, cnt] * mask_com[0])
-        com_y_ch.append(data_per_ch[:, cnt] * mask_com[1])
+        com_x_ch.append(data_per_ch[..., cnt] * mask_com[0])
+        com_y_ch.append(data_per_ch[..., cnt] * mask_com[1])
     com_x_ch = torch.cat(
         [_.unsqueeze(-1) for _ in com_x_ch], axis = 1).mean(1, dtype=torch.float32)
     com_y_ch = torch.cat(
@@ -623,6 +726,7 @@ def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
         :rtype: np.ndarray
     """
     n_x, n_y, n_r, n_c = data4D.shape
+    data4D_dtype = data4D.dtype
 
     if mask4D is not None:
         assert mask4D.shape == data4D.shape,\
@@ -642,13 +746,13 @@ def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
     clm_grid_cube      = np.tile(clm_grid,   (n_x, n_y, 1, 1))
     
     if mask4D is not None:
-        mass = (data4D * mask4D).sum(3).sum(2).astype('float')
-        CoMx = (data4D * row_grid_cube * mask4D).sum(3).sum(2).astype('float')
-        CoMy = (data4D * clm_grid_cube * mask4D).sum(3).sum(2).astype('float')
+        mass = (data4D * mask4D).sum(3).sum(2).astype(data4D_dtype)
+        CoMx = (data4D * row_grid_cube * mask4D).sum(3).sum(2).astype(data4D_dtype)
+        CoMy = (data4D * clm_grid_cube * mask4D).sum(3).sum(2).astype(data4D_dtype)
     else:
-        mass = data4D.sum(3).sum(2).astype('float')
-        CoMx = (data4D * row_grid_cube).sum(3).sum(2).astype('float')
-        CoMy = (data4D * clm_grid_cube).sum(3).sum(2).astype('float')
+        mass = data4D.sum(3).sum(2).astype(data4D_dtype)
+        CoMx = (data4D * row_grid_cube).sum(3).sum(2).astype(data4D_dtype)
+        CoMy = (data4D * clm_grid_cube).sum(3).sum(2).astype(data4D_dtype)
         
     CoMx[mass!=0] = CoMx[mass!=0] / mass[mass!=0]
     CoMy[mass!=0] = CoMy[mass!=0] / mass[mass!=0]
@@ -657,7 +761,7 @@ def centre_of_mass_4D(data4D, mask4D = None, normalize = True):
         CoMx -= CoMx.mean()
         CoMy -= CoMy.mean()
 
-    return CoMx, CoMy
+    return CoMx.astype(data4D_dtype), CoMy.astype(data4D_dtype)
 
 def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
     
@@ -679,13 +783,13 @@ def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
         corr_mat = corr_mat / data4D_a.shape[2] / data4D_a.shape[3]
     return corr_mat
 
-def locate_atoms(stem, min_distance = 3, min_distance_init = 1,
-                 maxfilter_size = 3, reject_too_close = False,
+def locate_atoms(stem, min_distance = 3, min_distance_init = 3,
+                 maxfilter_size = 0, reject_too_close = False,
                  rgflib_fitBackground_kwargs = None, logger = None):
     
     n_x, n_y = stem.shape
     
-    nSTEM = stem.max() -stem.copy()
+    nSTEM = stem.max() - stem.copy()
     
     from skimage.feature import peak_local_max
     import scipy.ndimage
@@ -714,8 +818,8 @@ def locate_atoms(stem, min_distance = 3, min_distance_init = 1,
     if logger is not None: logger('finding peak local max!')
     coordinates = peak_local_max(image_max, min_distance=min_distance_init)
     
-    inds = []
     if(reject_too_close):
+        inds = []
         if logger is not None: logger('rejecting too close ones!')
         dist_coord_to_com = np.zeros(len(coordinates))
         move_by_com = np.zeros((len(coordinates), 2))
@@ -797,7 +901,7 @@ def stem_image_nyquist_interpolation(
     Returns:
     - StemImageInterpolated: Upsampled 2D STEM image.
     """
-    npiy, npix = np.shape(StemImage)
+    npix, npiy = np.shape(StemImage)
     qalpha = Knought * alpha * 1.0e-3
     qband = 2.0 * qalpha
     qnyq = 2.0 * qband
@@ -809,11 +913,11 @@ def stem_image_nyquist_interpolation(
         print('Input STEM image is insufficiently sampled for Nyquist interpolation')
 
     ctemp2 = np.fft.fftshift(np.fft.fft2(StemImage))
-    ctemp = np.zeros((npiyout, npixout), dtype=complex)
+    ctemp = np.zeros((npixout, npiyout), dtype=complex)
 
     center_y, center_x = npiyout // 2, npixout // 2
     start_y, start_x = center_y - npiy // 2, center_x - npix // 2
-    ctemp[start_y:start_y + npiy, start_x:start_x + npix] = ctemp2
+    ctemp[start_x:start_x + npix, start_y:start_y + npiy] = ctemp2
 
     ctemp = np.fft.ifft2(np.fft.ifftshift(ctemp))
     StemImageInterpolated = np.real(ctemp)
@@ -839,16 +943,15 @@ def upsample_4d_data(data4d, xlen, ylen, alpha, Knought, npixout, npiyout):
     data4d_shape = data4d.shape
     data4d = data4d.reshape(data4d_shape[0], data4d_shape[1], -1)
     data4d_upsampled = np.zeros(
-        (npiyout, npixout, data4d.shape[2]), dtype=data4d.dtype)
+        (npixout, npiyout, data4d.shape[2]), dtype=data4d.dtype)
     
     for pix_cnt in range(data4d.shape[2]):
         data4d_upsampled[:, :, pix_cnt] = stem_image_nyquist_interpolation(
-            StemImage=data4d[:, :, pix_cnt].copy(), 
-            xlen=xlen, ylen=ylen, alpha=alpha, Knought=Knought, 
-            npixout=npixout, npiyout=npiyout)
+            StemImage=data4d[:, :, pix_cnt].copy(),xlen=xlen, ylen=ylen, 
+            alpha=alpha, Knought=Knought,npixout=npixout, npiyout=npiyout)
 
     data4d_upsampled = data4d_upsampled.reshape(
-        npiyout, npixout, data4d_shape[2], data4d_shape[3])
+        npixout, npiyout, data4d_shape[2], data4d_shape[3])
 
     return data4d_upsampled
 
@@ -888,7 +991,7 @@ def stem_4d_nyquist_interpolation_fourier(
     # Perform the 4D Fourier transform
     ctemp2 = np.fft.fftshift(np.fft.fftn(data4d, axes=(2, 3)), axes=(2, 3))
 
-    ctemp = mcemtools.masking.crop_or_pad(ctemp2, (npiyout, npixout, n_r, n_c))
+    ctemp = mcemtools.masking.crop_or_pad(ctemp2, (npixout, npiyout, n_r, n_c))
 
     # # Create a larger 4D array to hold the interpolated Fourier components
     # ctemp = np.zeros((npixout, npiyout, n_r, n_c), dtype=complex)

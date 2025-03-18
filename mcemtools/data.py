@@ -7,10 +7,10 @@ from lognflow import printprogress
 import scipy
 from itertools import product
 
-def channel_to_image(data_ch, det_geo):
-    img = np.zeros(det_geo.shape)
-    for cnt, lbl in enumerate(np.unique(det_geo.ravel())[1:]):
-        img[det_geo == lbl] = data_ch[cnt]
+def channel_to_image(data_ch, detector_response):
+    img = np.zeros((detector_response.shape[1], detector_response.shape[2]))
+    for cnt in range(len(detector_response)):
+        img += data_ch[cnt] * detector_response[cnt]
     return img
 
 def load_dm4(filename):
@@ -370,14 +370,17 @@ def np_random_poisson_no_zeros(data4D_nonoise):
     return data4D_noisy
 
 class segmented_to_4D:
-    def __init__(self, channel_based_data, detector_geometry):
+    def __init__(self, channel_based_data, detector_response):
         self.channel_based_data = channel_based_data
-        self.detector_geometry = detector_geometry
+        self.detector_response = detector_response
         self.n_ch, self.n_x, self.n_y = channel_based_data.shape
-        self.n_r, self.n_c = detector_geometry.shape
+        self.n_ch_det, self.n_r, self.n_c = detector_response.shape
         self.shape = (self.n_x, self.n_y, self.n_r, self.n_c)
         self.dtype = self.channel_based_data.dtype
         
+        assert self.n_ch ==  self.n_ch_det, \
+            'your detector response number of channels is different from data'
+
     def __getitem__(self, index):
         # Handle the case where index is a tuple of slices or integers
         if isinstance(index, tuple):
@@ -397,12 +400,12 @@ class segmented_to_4D:
 
                 pbar = printprogress(self.n_ch, print_function=None)
                 for segcnt in range(self.n_ch):
-                    mask = self.detector_geometry == segcnt + 1
+                    mask = self.detector_response[segcnt]
                     
                     # Apply mask and slice
                     data_slice = self.channel_based_data[segcnt, row_index, col_index]
-                    cbed_slices[:, :, mask] += np.tile(
-                        np.expand_dims(data_slice, -1), (1, 1, mask.sum()))
+                    cbed_slices += data_slice * mask
+                    # np.tile(np.expand_dims(data_slice, -1), (1, 1, mask.sum()))
                     
                     ETA = pbar()
                     if (ETA > 120) & (pbar.in_print_function is None):
@@ -416,8 +419,10 @@ class segmented_to_4D:
                 cbed = np.zeros((self.n_r, self.n_c))
                 
                 for segcnt in range(self.n_ch):
-                    mask = (self.detector_geometry == segcnt)
-                    cbed[mask] = self.channel_based_data[segcnt, row, col]
+                    mask = self.detector_response[segcnt].copy()
+                    ch_cbed = self.channel_based_data[segcnt, row, col].copy()
+                    ch_cbed *= mask
+                    cbed += ch_cbed.copy()
                 
                 return cbed
             
@@ -438,27 +443,28 @@ class segmented_to_4D:
         radius = BF_rad / max_rad * self.n_r / 2.0
         mask2d = mcemtools.annular_mask((self.n_r, self.n_c), radius = radius)
         
-        w_BF = np.zeros(self.detector_geometry.max())
-        w_DF = np.zeros(self.detector_geometry.max())
-        for lblcnt, lbl in enumerate(np.unique(self.detector_geometry)[1:]):
-            w_BF[lblcnt] = ((self.detector_geometry == lbl) & (mask2d == 1)).sum()\
-                                               / (self.detector_geometry == lbl).sum()
-            w_DF[lblcnt] = ((self.detector_geometry == lbl) & (mask2d == 0)).sum()\
-                                               / (self.detector_geometry == lbl).sum()
+        w_BF = np.zeros(self.n_ch)
+        w_DF = np.zeros(self.n_ch)
+        for lblcnt in range(self.n_ch):
+            w_BF[lblcnt] = ((self.detector_response[lblcnt]) * (mask2d == 1)).sum()\
+                                               / (mask2d == 1).sum()
+            w_DF[lblcnt] = ((self.detector_response[lblcnt]) * (mask2d == 0)).sum()\
+                                               / (mask2d == 0).sum()
     
         return w_BF, w_DF, mask2d
     
     def get_stat(self, weights = None, normalize_for_com = True):
-        data_per_ch, det_geo = self.channel_based_data , self.detector_geometry
+        data_per_ch, detector_response = self.channel_based_data , self.detector_response
         if weights is None:
             weights = np.ones(self.n_ch)
+        weights_sum = weights.sum()
 
         stem = (data_per_ch * weights[
-            :, np.newaxis, np.newaxis]).sum(0) / weights.sum()
+            :, np.newaxis, np.newaxis]).sum(0)
         
-        pacbed = np.zeros(det_geo.shape)
-        for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
-            pacbed[det_geo == label] += data_per_ch[cnt].mean() * weights[cnt]
+        pacbed = np.zeros((self.n_r, self.n_c))
+        for cnt in range(self.n_ch):
+            pacbed += data_per_ch[cnt].mean() * weights[cnt] * detector_response[cnt]
         pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
 
         data_per_ch = data_per_ch.copy()
@@ -468,15 +474,19 @@ class segmented_to_4D:
             data_per_ch[data_per_ch_sum != 0] /= data_per_ch_sum[data_per_ch_sum != 0]
             data_per_ch[data_per_ch_sum == 0] = 0
 
-        cent_x, cent_y = det_geo.shape[0]//2, det_geo.shape[1]//2
+        cent_x, cent_y = self.n_r//2, self.n_c//2
         com_x_ch = np.zeros(data_per_ch.shape)
         com_y_ch = np.zeros(data_per_ch.shape)
-        for cnt, label in enumerate(np.unique(det_geo.ravel())[1:]):
-            mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_geo == label)
+        for cnt in range(self.n_ch):
+            mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(detector_response[cnt])
             com_x_ch[cnt] = data_per_ch[cnt]*(mask_com_x - cent_x)
             com_y_ch[cnt] = data_per_ch[cnt]*(mask_com_y - cent_y)
-        com_x = (com_x_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
-        com_y = (com_y_ch * weights[:, np.newaxis, np.newaxis]).sum(0) / weights.sum()
+        com_x = (com_x_ch * weights[:, np.newaxis, np.newaxis]).sum(0)
+        com_y = (com_y_ch * weights[:, np.newaxis, np.newaxis]).sum(0)
+        if weights_sum:
+            com_x = com_x / weights_sum
+            com_y = com_y / weights_sum
+            stem = stem / weights_sum
 
         return stem, pacbed, com_x, com_y, pacbed_com_x, pacbed_com_y
     
@@ -501,7 +511,7 @@ class segmented_to_4D:
 
         return filtered_com_x, filtered_com_y, kernel
     
-def apply_segment_sums(img, det_geo, return_by_channle = False):
+def apply_segment_sums(img, detector_response, return_by_channle = False):
     """
     Replace values in a multi-dimensional image based on a segmented labeled image.
     
@@ -510,10 +520,9 @@ def apply_segment_sums(img, det_geo, return_by_channle = False):
     img : np.ndarray
         The multi-dimensional image array with shape (n_x, n_y, n_r, n_c),
         where each (n_r, n_c) slice is a single image.
-    det_geo : np.ndarray
-        The labeled segmentation image with the same shape as img[-2:].
+    detector_response : np.ndarray of shape n_ch x n_r x n_c
         The area around the detector should be set to 0, and each segment
-        should be labeled with a channel number from 1 to 12.
+        should appear in a single channle with its artifacts.
 
     Returns:
     -------
@@ -523,43 +532,34 @@ def apply_segment_sums(img, det_geo, return_by_channle = False):
     Raises:
     ------
     ValueError
-        If det_geo does not match the last two dimensions of img.
+        If detector_response does not match the last two dimensions of img.
     
     Notes:
     ------
-    This function sums the values in each segment of img, defined by det_geo.
-    Each segment (where det_geo == i) is replaced by the segment's sum in the
+    This function sums the values in each segment of img, defined by detector_response.
+    Each segment (where detector_response == i) is replaced by the segment's sum in the
     modified img.
     """
-    # Validate that det_geo matches the last two dimensions of img
-    if det_geo.shape != img.shape[-2:]:
-        raise ValueError("The shape of det_geo must match the last two dimensions of img.")
+    # Validate that detector_response matches the last two dimensions of img
+    if detector_response.shape[1:] != img.shape[-2:]:
+        raise ValueError("The shape of detector_response must match the last two dimensions of img.")
 
     # Copy img to avoid modifying the original image
     
     if return_by_channle:
-        data_by_ch = np.zeros(
-            (img.shape[0], img.shape[1], len(np.unique(det_geo)) - 1), 
-            dtype = img.dtype)
+        data_by_ch = np.zeros((img.shape[0], img.shape[1], len(detector_response)), dtype = img.dtype)
     else:
         modified_img = img.copy()
     # Iterate through each image slice (n_r, n_c)
     for i in range(img.shape[0]):
         for j in range(img.shape[1]):
             # For each unique label, sum values in img and replace within the segment
-            for label in np.unique(det_geo):
-                if label == 0:
-                    continue  # Skip the area around the detector
-
-                # Calculate the sum of values within the current segment
-                segment_sum = img[i, j][det_geo == label].sum()
-                
-                # Assign the sum to the segment in the modified image
-                
+            for cnt in range(len(detector_response)):
+                segment_sum = (img[i, j] * detector_response[cnt]).sum()
                 if return_by_channle:
-                    data_by_ch[i, j][label - 1] = segment_sum
+                    data_by_ch[i, j][cnt] = segment_sum
                 else:
-                    modified_img[i, j][det_geo == label] = segment_sum
+                    modified_img[i, j] = segment_sum
 
     if return_by_channle:
         return data_by_ch

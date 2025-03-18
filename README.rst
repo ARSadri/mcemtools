@@ -15,6 +15,13 @@ mcemtools
 
 Deep unsupervised analysis tools for Four-dimensional Scanning Transmission Electron Microscopy (4D-STEM) 
 
+In order to run the pyms simulations, you have to get it from:
+
+https://github.com/Michael-MD/py_multislice
+
+Then also there is a utils.py in the examples directory that helps.
+
+
 * Free software: MIT license
 * Documentation: https://mcemtools.readthedocs.io.
 
@@ -22,7 +29,8 @@ Deep unsupervised analysis tools for Four-dimensional Scanning Transmission Elec
 Features
 --------
 
-* TODO
+* Denoising 4D-STEM data
+* a few tools to help pre-process 4D-STEM data
 
 Credits
 -------

@@ -150,3 +150,7 @@ History
 0.9.10 (2025-01-18)
 -------------------
 * Denoising examples become consistant with current pyms version
+
+0.9.11 (2025-01-18)
+-------------------
+* Adding a link to Michael pyms in the ReadMe file.
