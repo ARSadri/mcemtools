@@ -2,7 +2,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from lognflow.plt_utils import plt_colorbar
-from lognflow import lognflow, logviewer
+from lognflow import lognflow
 
 import mcemtools
 
@@ -43,7 +43,7 @@ def tk_r_em(
     
     if(include_training):
         if(not log_exist_ok):
-            logged = logviewer(logs_root)
+            logged = lognflow(logs_root)
             exp_list_names = logged.get_flist(
                 f'denoised*/I4D_denoiser/I4D_denoised/denoised_*.npy')
             if len(exp_list_names)>0:
@@ -55,7 +55,7 @@ def tk_r_em(
         else:
             logger = lognflow(log_dir = pretrained_fpath_I4D.parent.parent)    
 
-    logged_ref     = logviewer(ref_dir)
+    logged_ref     = lognflow(ref_dir)
     data4D_noisy   = logged_ref.get_single('noisy.npy')
     data4D_nonoise = logged_ref.get_single('nonoise.npy')
     # if use_pre_denoised_STEM:
@@ -124,7 +124,7 @@ def tk_r_em(
     logger.log_single('I4D_denoiser/canvases/denoised', frame_denoised)
     logger.log_single('I4D_denoiser/canvases/nonoise', frame_nonoise)
     logger.log_single('I4D_denoiser/canvases/noisy', frame_noisy)
-    logger('--\|/'*16)
+    logger('-='*16)
     logger_dir = logger.log_dir
     
     del logger

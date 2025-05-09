@@ -7,10 +7,10 @@ from lognflow import printprogress
 import scipy
 from itertools import product
 
-def channel_to_image(data_ch, detector_response):
+def channel_to_image(data_by_ch, detector_response):
     img = np.zeros((detector_response.shape[1], detector_response.shape[2]))
     for cnt in range(len(detector_response)):
-        img += data_ch[cnt] * detector_response[cnt]
+        img += data_by_ch[..., cnt] * detector_response[cnt]
     return img
 
 def load_dm4(filename):
@@ -373,7 +373,7 @@ class segmented_to_4D:
     def __init__(self, channel_based_data, detector_response):
         self.channel_based_data = channel_based_data
         self.detector_response = detector_response
-        self.n_ch, self.n_x, self.n_y = channel_based_data.shape
+        self.n_x, self.n_y, self.n_ch = channel_based_data.shape
         self.n_ch_det, self.n_r, self.n_c = detector_response.shape
         self.shape = (self.n_x, self.n_y, self.n_r, self.n_c)
         self.dtype = self.channel_based_data.dtype
@@ -403,7 +403,7 @@ class segmented_to_4D:
                     mask = self.detector_response[segcnt]
                     
                     # Apply mask and slice
-                    data_slice = self.channel_based_data[segcnt, row_index, col_index]
+                    data_slice = self.channel_based_data[row_index, col_index, segcnt]
                     cbed_slices += data_slice * mask
                     # np.tile(np.expand_dims(data_slice, -1), (1, 1, mask.sum()))
                     
@@ -420,7 +420,7 @@ class segmented_to_4D:
                 
                 for segcnt in range(self.n_ch):
                     mask = self.detector_response[segcnt].copy()
-                    ch_cbed = self.channel_based_data[segcnt, row, col].copy()
+                    ch_cbed = self.channel_based_data[row, col, segcnt].copy()
                     ch_cbed *= mask
                     cbed += ch_cbed.copy()
                 
@@ -453,41 +453,75 @@ class segmented_to_4D:
     
         return w_BF, w_DF, mask2d
     
-    def get_stat(self, weights = None, normalize_for_com = True):
-        data_per_ch, detector_response = self.channel_based_data , self.detector_response
+    def get_stat_old(self, weights = None, normalize_for_com = True):
+        data_by_ch, detector_response = self.channel_based_data , self.detector_response
         if weights is None:
             weights = np.ones(self.n_ch)
         weights_sum = weights.sum()
 
-        stem = (data_per_ch * weights[
-            :, np.newaxis, np.newaxis]).sum(0)
-        
+        stem = (data_by_ch * weights[None, None]).sum(-1)
+
         pacbed = np.zeros((self.n_r, self.n_c))
         for cnt in range(self.n_ch):
-            pacbed += data_per_ch[cnt].mean() * weights[cnt] * detector_response[cnt]
+            pacbed += data_by_ch[..., cnt].mean() * weights[cnt] * detector_response[cnt]
         pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
 
-        data_per_ch = data_per_ch.copy()
-        if normalize_for_com:
-            data_per_ch_sum = np.expand_dims(data_per_ch.sum(0), 0)
-            data_per_ch_sum = np.tile(data_per_ch_sum, (data_per_ch.shape[0], 1, 1))
-            data_per_ch[data_per_ch_sum != 0] /= data_per_ch_sum[data_per_ch_sum != 0]
-            data_per_ch[data_per_ch_sum == 0] = 0
+        if 0:
+            data_by_ch = data_by_ch.copy()
+            if normalize_for_com:
+                data_by_ch_sum = np.expand_dims(data_by_ch.sum(-1), -1)
+                data_by_ch_sum = np.tile(data_by_ch_sum, (1, 1, data_by_ch.shape[-1]))
+                data_by_ch[data_by_ch_sum != 0] /= data_by_ch_sum[data_by_ch_sum != 0]
+                data_by_ch[data_by_ch_sum == 0] = 0
 
-        cent_x, cent_y = self.n_r//2, self.n_c//2
-        com_x_ch = np.zeros(data_per_ch.shape)
-        com_y_ch = np.zeros(data_per_ch.shape)
+            cent_x, cent_y = self.n_r//2, self.n_c//2
+            com_x_ch = np.zeros(data_by_ch.shape)
+            com_y_ch = np.zeros(data_by_ch.shape)
+            for cnt in range(self.n_ch):
+                mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(detector_response[cnt])
+                com_x_ch[..., cnt] = data_by_ch[..., cnt]*(mask_com_x - cent_x)
+                com_y_ch[..., cnt] = data_by_ch[..., cnt]*(mask_com_y - cent_y)
+            com_x = (com_x_ch * weights[None, None]).sum(-1)
+            com_y = (com_y_ch * weights[None, None]).sum(-1)
+        else:
+            import torch
+            n_x, n_y, n_ch = data_by_ch.shape
+            label_CoM_data = torch.from_numpy(data_by_ch.copy())
+            label_CoM_data /= label_CoM_data.sum(-1)[:, :, None]
+            label_CoM_data = label_CoM_data.view(-1, n_ch)
+            det_CoMs = mcemtools.analysis.CoM_detector(detector_response)
+            com_x, com_y = mcemtools.analysis.CoM_channel_torch(label_CoM_data, det_CoMs)
+            com_x = com_x.numpy().reshape(n_x, n_y)
+            com_y = com_y.numpy().reshape(n_x, n_y)
+            
+        # if weights_sum:
+        #     com_x = com_x / weights_sum
+        #     com_y = com_y / weights_sum
+        #     stem = stem / weights_sum
+
+        return stem, pacbed, com_x, com_y, pacbed_com_x, pacbed_com_y
+    
+    def get_stat(self, normalize_for_com = True):
+        data_by_ch, detector_response = self.channel_based_data , self.detector_response
+        n_x, n_y, n_ch = data_by_ch.shape
+        det_CoMs = mcemtools.analysis.CoM_detector(detector_response)
+
+        stem = data_by_ch.sum(-1)
+
+        pacbed = np.zeros((self.n_r, self.n_c))
         for cnt in range(self.n_ch):
-            mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(detector_response[cnt])
-            com_x_ch[cnt] = data_per_ch[cnt]*(mask_com_x - cent_x)
-            com_y_ch[cnt] = data_per_ch[cnt]*(mask_com_y - cent_y)
-        com_x = (com_x_ch * weights[:, np.newaxis, np.newaxis]).sum(0)
-        com_y = (com_y_ch * weights[:, np.newaxis, np.newaxis]).sum(0)
-        if weights_sum:
-            com_x = com_x / weights_sum
-            com_y = com_y / weights_sum
-            stem = stem / weights_sum
+            pacbed += data_by_ch[..., cnt].mean() * detector_response[cnt]
+        pacbed_com_x, pacbed_com_y = scipy.ndimage.center_of_mass(pacbed)
 
+        import torch
+        label_CoM_data = torch.from_numpy(data_by_ch.copy())
+        if normalize_for_com:
+            label_CoM_data /= label_CoM_data.sum(-1)[:, :, None]
+        label_CoM_data = label_CoM_data.reshape(-1, n_ch)
+        com_x, com_y = mcemtools.analysis.CoM_channel_torch(label_CoM_data, det_CoMs)
+        com_x = com_x.reshape(n_x, n_y).numpy()
+        com_y = com_y.reshape(n_x, n_y).numpy()
+            
         return stem, pacbed, com_x, com_y, pacbed_com_x, pacbed_com_y
     
     def filtered_by_kernel(self, coords, win_side, weights):
@@ -511,13 +545,14 @@ class segmented_to_4D:
 
         return filtered_com_x, filtered_com_y, kernel
     
-def apply_segment_sums(img, detector_response, return_by_channle = False):
+def apply_detector_response(d4d, detector_response, verbose = False,
+                            return_by_channle = True, segment_is_one_pixels = True):
     """
     Replace values in a multi-dimensional image based on a segmented labeled image.
     
     Parameters:
     ----------
-    img : np.ndarray
+    d4d : np.ndarray
         The multi-dimensional image array with shape (n_x, n_y, n_r, n_c),
         where each (n_r, n_c) slice is a single image.
     detector_response : np.ndarray of shape n_ch x n_r x n_c
@@ -532,56 +567,42 @@ def apply_segment_sums(img, detector_response, return_by_channle = False):
     Raises:
     ------
     ValueError
-        If detector_response does not match the last two dimensions of img.
+        If detector_response does not match the last two dimensions of d4d.
     
     Notes:
     ------
-    This function sums the values in each segment of img, defined by detector_response.
+    This function sums the values in each segment of d4d, defined by detector_response.
     Each segment (where detector_response == i) is replaced by the segment's sum in the
-    modified img.
+    modified d4d.
     """
-    # Validate that detector_response matches the last two dimensions of img
-    if detector_response.shape[1:] != img.shape[-2:]:
-        raise ValueError("The shape of detector_response must match the last two dimensions of img.")
+    if detector_response.shape[1:] != d4d.shape[-2:]:
+        raise ValueError("The shape of detector_response must match the last two dimensions of d4d.")
 
-    # Copy img to avoid modifying the original image
     
     if return_by_channle:
-        data_by_ch = np.zeros((img.shape[0], img.shape[1], len(detector_response)), dtype = img.dtype)
+        data_by_ch = np.zeros(
+            (d4d.shape[0], d4d.shape[1], len(detector_response)), dtype = d4d.dtype)
     else:
-        modified_img = img.copy()
-    # Iterate through each image slice (n_r, n_c)
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            # For each unique label, sum values in img and replace within the segment
-            for cnt in range(len(detector_response)):
-                segment_sum = (img[i, j] * detector_response[cnt]).sum()
-                if return_by_channle:
-                    data_by_ch[i, j][cnt] = segment_sum
-                else:
-                    modified_img[i, j] = segment_sum
+        modified_d4d = d4d.copy()
+
+    if verbose: pbar = printprogress(d4d.shape[0] * d4d.shape[1])
+    for i, j in np.ndindex(d4d.shape[:2]):
+        segments_sum = d4d[None, i, j] * detector_response
+        if return_by_channle:
+            data_by_ch[i, j] = segments_sum.sum((1, 2))
+        else:
+            if segment_is_one_pixels:
+                img_by_ch = segments_sum.sum((1, 2))
+                modified_d4d[i, j] = (img_by_ch[:, None, None] * detector_response).sum(0)
+            else:
+                modified_d4d[i, j] = segments_sum.sum(0)
+        if verbose: pbar()
+                
 
     if return_by_channle:
         return data_by_ch
     else:
-        return modified_img
-    
-def apply_detector_response(data4d, det_resp):
-    try:
-        n_ch, n_r, n_c = det_resp.shape
-    except Exception as e:
-        print(f'det_resp : {det_resp.shape} must be in shape of n_ch x n_r x n_c')
-        raise e
-
-    data_by_ch = np.zeros((data4d.shape[0], data4d.shape[1], n_ch), dtype = data4d.dtype)
-    
-    # prod = np.tile(data4d[np.newaxis], (n_ch, 1, 1, 1, 1)) * np.tile(
-    #     det_resp[:, np.newaxis, np.newaxis], (1, data4d.shape[0], data4d.shape[1], 1, 1))
-    # data_by_ch = prod.mean((3, 4)).swapaxes(0, 1).swapaxes(1, 2)
-                                                                                           
-    for chcnt in range(n_ch):
-        data_by_ch[:, :, chcnt] = (data4d * det_resp[chcnt]).mean((2, 3))
-    return data_by_ch
+        return modified_d4d
 
 def generate_indices(labels_shape, batch_size, method = 'class_based'):
     """
@@ -670,3 +691,5 @@ def generate_indices(labels_shape, batch_size, method = 'class_based'):
                         bunch_of_samples[gcnt * batch_size: (gcnt + 1) * batch_size]
         
     return samples
+
+

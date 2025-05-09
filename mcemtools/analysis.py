@@ -684,10 +684,10 @@ def CoM_torch(data4D, mask4D = None, normalize = True,
 
 def CoM_detector(det_resp):
     n_ch, n_r, n_c = det_resp.shape
-    cent_x, cent_y = scipy.ndimage.center_of_mass(np.ones((n_r, n_c)))
+    cent_x, cent_y = scipy.ndimage.center_of_mass(np.ones((n_r, n_c)) / (n_r * n_c))
     mask_coms = []
     for cnt in range(n_ch):
-        mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_resp[cnt])
+        mask_com_x, mask_com_y = scipy.ndimage.center_of_mass(det_resp[cnt] / det_resp[cnt].sum())
         mask_com_x -= cent_x
         mask_com_y -= cent_y
         mask_coms.append([mask_com_x, mask_com_y])

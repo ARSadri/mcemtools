@@ -154,3 +154,7 @@ History
 0.9.11 (2025-01-18)
 -------------------
 * Adding a link to Michael pyms in the ReadMe file.
+
+0.9.12 (2025-05-09)
+-------------------
+* fixed markimage

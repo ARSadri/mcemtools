@@ -297,13 +297,203 @@ def test_image_by_windows():
     from lognflow import plt_imshow
     plt_imshow(img_recon); plt.show(); exit()
 
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, RangeSlider, TextBox
+import numpy as np
+
 class markimage:
+    def __init__(self, 
+                 in_image, 
+                 mark_shape='circle',
+                 figsize=(10, 5),
+                 kwargs_shape=dict(ec='pink', fc='None', linewidth=1),
+                 **kwargs_for_imshow):
+        kwargs_shape.setdefault('ec', 'pink')
+        kwargs_shape.setdefault('fc', 'None')
+        kwargs_shape.setdefault('linewidth', 1)
+
+        self.mark_shape = mark_shape
+        self.fig, axs = plt.subplots(1, 2, figsize=figsize)
+        self.fig.subplots_adjust(bottom=0.45)
+        self.im = axs[0].imshow(in_image, **kwargs_for_imshow)
+        cm = self.im.get_cmap()
+
+        _, bins, patches = axs[1].hist(in_image.flatten(), bins='auto')
+        bin_centres = 0.5 * (bins[:-1] + bins[1:])
+        col = (bin_centres - np.min(bin_centres)) / np.ptp(bin_centres)
+        for c, p in zip(col, patches):
+            plt.setp(p, 'facecolor', cm(c))
+        axs[1].set_title('Histogram of pixel intensities')
+
+        slider_ax = self.fig.add_axes([0.25, 0.3, 0.4, 0.03])
+        self.slider_thresh = RangeSlider(
+            slider_ax, "", in_image.min(), in_image.max(), 
+            valinit=(in_image.min(), in_image.max()))
+        
+        tb_min_ax = self.fig.add_axes([0.83, 0.3, 0.06, 0.03])
+        tb_max_ax = self.fig.add_axes([0.93, 0.3, 0.06, 0.03])
+        self.tb_min = TextBox(tb_min_ax, 'min', initial=str(in_image.min()))
+        self.tb_max = TextBox(tb_max_ax, 'max', initial=str(in_image.max()))
+
+        self.lower_limit_line = axs[1].axvline(self.slider_thresh.val[0], color='k')
+        self.upper_limit_line = axs[1].axvline(self.slider_thresh.val[1], color='k')
+
+        self.slider_thresh.on_changed(self.update)
+        self.tb_min.on_submit(self.on_min_thresh)
+        self.tb_max.on_submit(self.on_max_thresh)
+
+        if self.mark_shape == 'circle':
+            cx, cy = in_image.shape
+            cx /= 2
+            cy /= 2
+            circle_radius = min(cx, cy)
+
+            self.markshape = plt.Circle((cy, cx), circle_radius, **kwargs_shape)
+            axs[0].add_patch(self.markshape)
+
+            sl1 = self.fig.add_axes([0.25, 0.2, 0.5, 0.03])
+            sl2 = self.fig.add_axes([0.25, 0.15, 0.5, 0.03])
+            sl3 = self.fig.add_axes([0.25, 0.1, 0.5, 0.03])
+
+            self.slider_r = Slider(sl1, "", 0.0, cx, valinit=circle_radius)
+            self.slider_cx = Slider(sl2, "", 0.0, in_image.shape[0], valinit=cx)
+            self.slider_cy = Slider(sl3, "", 0.0, in_image.shape[1], valinit=cy)
+
+            tb_r_ax = self.fig.add_axes([0.87, 0.2, 0.12, 0.03])
+            tb_cx_ax = self.fig.add_axes([0.87, 0.15, 0.12, 0.03])
+            tb_cy_ax = self.fig.add_axes([0.87, 0.1, 0.12, 0.03])
+
+            self.tb_r = TextBox(tb_r_ax, 'radius', initial=str(circle_radius))
+            self.tb_cx = TextBox(tb_cx_ax, 'centre_x', initial=str(cx))
+            self.tb_cy = TextBox(tb_cy_ax, 'centre_y', initial=str(cy))
+
+            self.slider_r.on_changed(self.sync_radius)
+            self.slider_cx.on_changed(self.sync_cx)
+            self.slider_cy.on_changed(self.sync_cy)
+
+            self.tb_r.on_submit(self.set_radius)
+            self.tb_cx.on_submit(self.set_cx)
+            self.tb_cy.on_submit(self.set_cy)
+
+        if self.mark_shape == 'rectangle':
+            h, w = in_image.shape
+            tl_r = h * 0.1
+            tl_c = w * 0.1
+            br_r = h * 0.9
+            br_c = w * 0.9
+
+            self.markshape = plt.Rectangle(
+                (tl_c, tl_r), br_c - tl_c, br_r - tl_r, **kwargs_shape)
+            axs[0].add_patch(self.markshape)
+
+            sliders = {
+                'top_left_r': [0.25, 0.2, tl_r, h],
+                'top_left_c': [0.25, 0.15, tl_c, w],
+                'bot_right_r': [0.25, 0.1, br_r, h],
+                'bot_right_c': [0.25, 0.05, br_c, w],
+            }
+
+            for i, (name, (x, y, val, vmax)) in enumerate(sliders.items()):
+                setattr(self, f'slider_{name}', Slider(
+                    self.fig.add_axes([x, y, 0.5, 0.03]), "", 0.0, vmax, valinit=val))
+                setattr(self, f'tb_{name}', TextBox(
+                    self.fig.add_axes([0.87, y, 0.12, 0.03]), name, initial=str(val)))
+                slider = getattr(self, f'slider_{name}')
+                textbox = getattr(self, f'tb_{name}')
+                slider.on_changed(self.sync_rect)
+                textbox.on_submit(lambda text, s=slider: s.set_val(float(text)))
+
+        plt.show()
+
+    def update(self, val):
+        self.im.norm.vmin = val[0]
+        self.im.norm.vmax = val[1]
+        self.lower_limit_line.set_xdata([val[0], val[0]])
+        self.upper_limit_line.set_xdata([val[1], val[1]])
+        self.tb_min.set_val(str(val[0]))
+        self.tb_max.set_val(str(val[1]))
+        self.fig.canvas.draw_idle()
+
+    def on_min_thresh(self, text):
+        try:
+            val = float(text)
+            self.slider_thresh.set_val((val, self.slider_thresh.val[1]))
+        except ValueError:
+            pass
+
+    def on_max_thresh(self, text):
+        try:
+            val = float(text)
+            self.slider_thresh.set_val((self.slider_thresh.val[0], val))
+        except ValueError:
+            pass
+
+    def sync_radius(self, val):
+        self.tb_r.set_val(str(val))
+        self.update2(val)
+
+    def sync_cx(self, val):
+        self.tb_cx.set_val(str(val))
+        self.update2(val)
+
+    def sync_cy(self, val):
+        self.tb_cy.set_val(str(val))
+        self.update2(val)
+
+    def set_radius(self, text):
+        try:
+            self.slider_r.set_val(float(text))
+        except ValueError:
+            pass
+
+    def set_cx(self, text):
+        try:
+            self.slider_cx.set_val(float(text))
+        except ValueError:
+            pass
+
+    def set_cy(self, text):
+        try:
+            self.slider_cy.set_val(float(text))
+        except ValueError:
+            pass
+
+    def sync_rect(self, val):
+        for name in ['top_left_r', 'top_left_c', 'bot_right_r', 'bot_right_c']:
+            textbox = getattr(self, f'tb_{name}')
+            slider = getattr(self, f'slider_{name}')
+            textbox.set_val(str(slider.val))
+        self.update2(val)
+
+    def update2(self, val):
+        if self.mark_shape == 'circle':
+            r = self.slider_r.val
+            cx = self.slider_cx.val
+            cy = self.slider_cy.val
+            self.markshape.set_center((cy, cx))
+            self.markshape.set_radius(r)
+        if self.mark_shape == 'rectangle':
+            r1 = self.slider_top_left_r.val
+            c1 = self.slider_top_left_c.val
+            r2 = self.slider_bot_right_r.val
+            c2 = self.slider_bot_right_c.val
+            self.markshape.set_xy((c1, r1))
+            self.markshape.set_width(abs(c2 - c1))
+            self.markshape.set_height(abs(r2 - r1))
+        self.fig.canvas.draw_idle()
+
+
+class markimage_old:
     def __init__(self, 
                  in_image, 
                  mark_shape = 'circle',
                  figsize=(10, 5),
-                 shape_color = "k",
+                 kwargs_shape = dict(ec = 'pink', fc = 'None', linewidth = 1),
                  **kwargs_for_imshow):
+        kwargs_shape.setdefault('ec', 'pink')
+        kwargs_shape.setdefault('fc', 'None')
+        kwargs_shape.setdefault('linewidth', 1)
+
         self.mark_shape = mark_shape
         self.fig, axs = plt.subplots(1, 2, figsize=figsize)
         self.fig.subplots_adjust(bottom=0.4)
@@ -338,8 +528,9 @@ class markimage:
             sl1 = plt.axes([0.25, 0.15, 0.6, 0.03])
             sl2 = plt.axes([0.25, 0.1,  0.6, 0.03])
             sl3 = plt.axes([0.25, 0.05, 0.6, 0.03])
+
             self.markshape = plt.Circle(
-                (cy,cx), circle_radius, ec=shape_color, fc = 'None')
+                (cy,cx), circle_radius, **kwargs_shape)
             axs[0].add_patch(self.markshape)
             self.slider_r = Slider(sl1, 
                 'radius', 0.0, self.im.get_array().shape[0]/2, 
@@ -367,26 +558,25 @@ class markimage:
             self.markshape = plt.Rectangle(
                 (top_left_r, top_left_c), 
                 bot_right_r - top_left_r, 
-                bot_right_c - top_left_c,
-                ec=shape_color, fc = 'None')
+                bot_right_c - top_left_c, **kwargs_shape)
             axs[0].add_patch(self.markshape)
             self.slider_top_left_r = Slider(
-                s_top_left_r, 'top_left_x', 0.0, 
-                self.im.get_array().shape[0]/2, valinit = top_left_r)
+                s_top_left_r, 'top_left_r', 0.0, 
+                self.im.get_array().shape[0], valinit = top_left_r)
             self.slider_top_left_c = Slider(
-                s_top_left_c, 'top_left_y', 0.0, 
-                self.im.get_array().shape[0], valinit = top_left_c)
+                s_top_left_c, 'top_left_c', 0.0, 
+                self.im.get_array().shape[1], valinit = top_left_c)
             self.slider_bot_right_r = Slider(
-                s_bot_right_r, 'bot_right_x', 0.0, 
-                self.im.get_array().shape[1], valinit = bot_right_r)
-            self.slider_s_bot_right_c = Slider(
-                s_bot_right_c, 's_bot_right_y', 0.0, 
+                s_bot_right_r, 's_bot_right_r', 0.0, 
+                self.im.get_array().shape[0], valinit = bot_right_r)
+            self.slider_bot_right_c = Slider(
+                s_bot_right_c, 'bot_right_c', 0.0, 
                 self.im.get_array().shape[1], valinit = bot_right_c)
 
             self.slider_top_left_r.on_changed(self.update2)
             self.slider_top_left_c.on_changed(self.update2)
             self.slider_bot_right_r.on_changed(self.update2)
-            self.slider_s_bot_right_c.on_changed(self.update2)
+            self.slider_bot_right_c.on_changed(self.update2)
         
         plt.show()
     
@@ -414,20 +604,17 @@ class markimage:
             self.markshape.set_radius(r)
             
         if(self.mark_shape == 'rectangle'):
-            self.slider_top_left_r.val
-            self.slider_top_left_c.val
-            self.slider_bot_right_r.val
-            self.slider_s_bot_right_c.val
-
-            self.markshape.set_xy = ((
-                self.slider_top_left_r.val,
-                self.slider_top_left_c.val))
-            self.markshape.set_width(
-                self.slider_bot_right_r.val - self.slider_top_left_r.val)
-            self.markshape.set_height(
-                self.slider_s_bot_right_c.val - self.slider_top_left_c.val)
+            self.markshape.set_width(np.abs(
+                self.slider_bot_right_c.val - self.slider_top_left_c.val))
+            self.markshape.set_height(np.abs(
+                self.slider_bot_right_r.val - self.slider_top_left_r.val))
+            self.markshape.set_xy((
+                self.slider_top_left_c.val,
+                self.slider_top_left_r.val))
 
         self.fig.canvas.draw_idle()
+#---------end of markimage class------------------
+
 
 def remove_labels(label_map, labels_to_remove):
     if(labels_to_remove.shape[0] > 0):

@@ -5,7 +5,7 @@ import scipy.ndimage
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from lognflow.plt_utils import plt_colorbar
-from lognflow import lognflow, logviewer, printprogress
+from lognflow import lognflow, printprogress
 
 import mcemtools
 
@@ -278,7 +278,7 @@ def cluster4_unet(
     
     if(include_training):
         if(not log_exist_ok):
-            logged = logviewer(logs_root)
+            logged = lognflow(logs_root)
             exp_list_names = logged.get_flist(f'{exp_name}*')
             if len(exp_list_names)>0:
                 return
@@ -289,7 +289,7 @@ def cluster4_unet(
         else:
             logger = lognflow(log_dir = pretrained_fpath_I4D.parent.parent)    
 
-    logged_ref     = logviewer(ref_dir)
+    logged_ref     = lognflow(ref_dir)
     data4D_noisy   = logged_ref.get_single('noisy.npy')
     data4D_nonoise = logged_ref.get_single('nonoise.npy')
     if use_denoised_STEM:
