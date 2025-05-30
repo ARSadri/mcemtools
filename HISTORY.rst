@@ -155,3 +155,7 @@ History
 -------------------
 * Adding a link to Michael pyms in the ReadMe file.
 * fixed markimage
+
+0.9.11 (2025-05-30)
+-------------------
+* fixed capsul network to handle any number of features in the output

@@ -181,7 +181,7 @@ class Decoder(nn.Module):
             classes = (x**2).sum(dim=-1)**0.5
             classes = F.softmax(classes, dim=-1)
             _, max_length_indices = classes.max(dim=1)
-            sparse_matrix = torch.eye(self.num_classes).cuda()
+            sparse_matrix = torch.eye(self.num_classes).to(x.device)
             y = sparse_matrix.index_select(dim=0, index=max_length_indices.data)
             x = x * y[:, :, None]
         
@@ -194,8 +194,9 @@ class Decoder(nn.Module):
 
 class CapsuleNetwork(nn.Module):
     def __init__(self, 
-                 num_classes = 52, 
-                 in_channels=8,
+                 num_classes = 52,
+                 num_dims = 4, 
+                 in_channels=16,
                  image_n_pix = 24*24,
                  PrimaryCaps_n_pix = 4*4,
                  Enc_out_channels=256, 
@@ -204,6 +205,8 @@ class CapsuleNetwork(nn.Module):
                  Classifier_out_channels = 16,
                  Decoder_hidden_dim = 512):
         super(CapsuleNetwork, self).__init__()
+        self.num_classes = num_classes
+        self.num_dims = num_dims
         self.image_n_pix = image_n_pix
         self.conv_layer = ConvLayer(in_channels = in_channels,
                                     out_channels = Enc_out_channels)
@@ -214,14 +217,14 @@ class CapsuleNetwork(nn.Module):
             PrimaryCaps_n_pix = PrimaryCaps_n_pix)
         
         self.Classifier_capsule = ClassifierCaps(
-            num_classes = num_classes,
+            num_classes = num_classes * num_dims,
             Prim_out_channels = Prim_out_channels,
             PrimaryCaps_n_pix = PrimaryCaps_n_pix,
             Classifier_in_channels=Prim_n_capsules, 
             Classifier_out_channels=Classifier_out_channels,
             )
         self.decoder = Decoder(
-            num_classes = num_classes,
+            num_classes = num_classes * num_dims,
             Decoder_input_vector_length = Classifier_out_channels,
             Decoder_hidden_dim = Decoder_hidden_dim,
             image_n_pix = image_n_pix,
@@ -236,7 +239,9 @@ class CapsuleNetwork(nn.Module):
         primary_caps_out = self.primary_capsule(features)
         caps_out = self.Classifier_capsule(primary_caps_out)
         
-        classification = caps_out.sum(dim=2)
+        caps_out_by_labelkind = caps_out.reshape(caps_out.shape[0], self.num_dims, self.num_classes, caps_out.shape[-1])
+        caps_out_by_labelkind = caps_out_by_labelkind.reshape(caps_out_by_labelkind.shape[0], caps_out_by_labelkind.shape[1], -1)
+        classification = caps_out_by_labelkind.sum(dim=2)
         
         reconstructed = self.decoder(caps_out)
         
@@ -261,7 +266,7 @@ class CapsuleLoss(nn.Module):
         clssif, reconstructions = preds
         batch_size = len(clssif)
         
-        if(0):
+        if 0:
             left  = (F.relu( 0.9-clssif) + 0.1 * F.relu(clssif-1.1)).view(batch_size, -1)
             right = (0.1 * F.relu(-0.1-clssif) + F.relu(clssif-0.1)).view(batch_size, -1)
             margin_loss_all = labels * left + self.TF_imbalance * (1.0 - labels) * right
@@ -270,7 +275,7 @@ class CapsuleLoss(nn.Module):
         margin_loss_all = self.classifier_weight * margin_loss_all
         images = self.data_gen(inds)[0]
         try:
-            images = torch.from_numpy(images).float().cuda()
+            images = torch.from_numpy(images).float().to(reconstructions.device)
         except: pass
         images = images.view(reconstructions.shape[0], reconstructions.shape[1], -1)
         

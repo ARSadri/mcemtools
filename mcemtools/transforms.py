@@ -1,5 +1,7 @@
 import numpy as np
 import scipy
+import math
+from functools import lru_cache
 
 def get_polar_coords(image_shape, polar_shape, centre = None):
     n_angles, n_rads = polar_shape
@@ -206,3 +208,60 @@ def revalue_elements(data, new_values = None, not_found_value = None):
         new_data[not np.isin(data, new_values)] = not_found_value
         
     return new_data
+
+@lru_cache(maxsize=None)
+def zernike_radial(n, m, rho):
+    """
+    Compute radial polynomial R_n^m for Zernike polynomial.
+    rho: tensor of shape [H, W]
+    """
+    R = torch.zeros_like(rho)
+    m = abs(m)
+    for k in range((n - m)//2 + 1):
+        num = math.comb(n - k, k) * math.comb(n - 2*k, (n - m)//2 - k)
+        R = R + ((-1)**k) * num * rho**(n - 2*k)
+    return R
+
+def generate_zernike_phase(q, qphi, Z_params, max_order):
+    """
+    Generate real-valued Zernike phase from learnable parameters.
+
+    Parameters
+    ----------
+    q_n : torch.Tensor
+        Normalized radial frequency (q/q_max), shape [H, W]
+    qphi : torch.Tensor
+        Azimuthal angle in radians, shape [H, W]
+    Z_params : torch.Tensor
+        Learnable Zernike coefficients, shape [num_terms]
+    max_order : int
+        Maximum radial order to include
+
+    Returns
+    -------
+    phase : torch.Tensor
+        Real-valued phase image (Zernike phase map), shape [H, W]
+    """
+    q_n = q / q.max()
+    phase = torch.zeros_like(q_n)
+    idx = 0
+    for n in range(max_order + 1):
+        for m in range(-n, n+1, 2):
+            if (n - abs(m)) % 2 != 0:
+                continue
+            R_nm = zernike_radial(n, m, q_n)
+            if m > 0:
+                phase += Z_params[idx] * R_nm * torch.cos(m * qphi)
+            elif m < 0:
+                phase += Z_params[idx] * R_nm * torch.sin(-m * qphi)
+            else:  # m == 0
+                phase += Z_params[idx] * R_nm
+            idx += 1
+    return phase
+
+def count_zernike_terms(max_order):
+    return sum(
+        1 for n in range(max_order + 1)
+        for m in range(-n, n + 1, 2)
+        if (n - abs(m)) % 2 == 0
+    )

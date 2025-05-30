@@ -7,10 +7,11 @@ from lognflow import printprogress
 import scipy
 from itertools import product
 
-def channel_to_image(data_by_ch, detector_response):
-    img = np.zeros((detector_response.shape[1], detector_response.shape[2]))
-    for cnt in range(len(detector_response)):
-        img += data_by_ch[..., cnt] * detector_response[cnt]
+def channel_to_image(image_by_ch, detector_response):
+    n_ch, n_r, n_c = detector_response.shape
+    n_ch_, image_by_ch.shape
+    assert n_ch_ == n_ch, 'image_by_ch should have same number of channels as detector_response'
+    img = (image_by_ch[:, None, None] * detector_response).sum(0)
     return img
 
 def load_dm4(filename):
@@ -691,5 +692,3 @@ def generate_indices(labels_shape, batch_size, method = 'class_based'):
                         bunch_of_samples[gcnt * batch_size: (gcnt + 1) * batch_size]
         
     return samples
-
-

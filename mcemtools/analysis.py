@@ -7,6 +7,31 @@ from itertools import product
 import torch
 import mcemtools
 
+def interpolate_surface(grid_locations, values, resolution=None, method='cubic'):
+    from scipy.interpolate import griddata
+
+    x = grid_locations[:, 0]
+    y = grid_locations[:, 1]
+
+    if resolution is None:
+        dx = np.abs(np.diff(np.sort(np.unique(x))))
+        dy = np.abs(np.diff(np.sort(np.unique(y))))
+        min_dx = dx[dx > 0].min() if np.any(dx > 0) else 1.0
+        min_dy = dy[dy > 0].min() if np.any(dy > 0) else 1.0
+        resolution = 0.1 * min(min_dx, min_dy)
+
+    x_min, x_max = x.min(), x.max()
+    y_min, y_max = y.min(), y.max()
+
+    grid_x, grid_y = np.meshgrid(
+        np.arange(x_min, x_max + resolution, resolution),
+        np.arange(y_min, y_max + resolution, resolution)
+    )
+
+    grid_z = griddata(grid_locations, values, (grid_x, grid_y), method=method)
+    extent = (x_min, x_max, y_min, y_max)
+    return grid_x, grid_y, grid_z, extent
+
 def Lorentzian_2dkernel(filter_size, gamma_x=1, gamma_y=1, angle=0):
     """
     Generate a 2D Lorentzian kernel with specified parameters.
