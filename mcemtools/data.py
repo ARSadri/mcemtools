@@ -8,8 +8,8 @@ import scipy
 from itertools import product
 
 def channel_to_image(image_by_ch, detector_response):
-    n_ch, n_r, n_c = detector_response.shape
-    n_ch_, image_by_ch.shape
+    n_ch, _, _ = detector_response.shape
+    n_ch_ = len(image_by_ch)
     assert n_ch_ == n_ch, 'image_by_ch should have same number of channels as detector_response'
     img = (image_by_ch[:, None, None] * detector_response).sum(0)
     return img

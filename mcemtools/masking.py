@@ -12,49 +12,28 @@ def mask2D_to_4D(mask2D, data4D_shape):
     _mask4D = np.tile(_mask4D, (n_x, n_y, 1, 1))
     return _mask4D
 
-def annular_mask(image_shape : tuple, 
-                 centre:tuple = None, radius:float=None, in_radius:float=None):
-    """make a circle bianry pattern in a given window
-    This simple function makes a circle filled with ones for where the circle is
-    in a window and leaves the rest of the elements to remain zero.
-    Parameters
-    ----------
-        :param image_shape:
-            a tuple of the shape of the image
-        :param centre: 
-            tuple of two float scalars
-            Intensity difference threshold.
-        :param radius :
-            float radius of the circle, if in_radius is None, inside this 
-            radius is filledup with 1.
-        :param in_radius :
-            float radius of the circle inside where it is not masked. If given
-            the annular ring between in_radius and radius will be 1.
-    Returns
-    -------
-        : np.ndarray of type uint8
-            An image of size h x w where all elements that are closer 
-            to the origin of a circle with centre at centre and radius 
-            radius are one and the rest are zero. We use equal or greater 
-            than for both radius and in_radius.
-    """
+import numpy as np
+
+def annular_mask(image_shape : tuple,
+                 centre:tuple = None, radius:float=None, in_radius:float=None,
+                 start_angle:float = 0, finish_angle:float = 2*np.pi):
     n_r, n_c = image_shape
     if centre is None: # use the middle of the image
-        # centre = (int(n_r/2), int(n_c/2))
         centre = [n_r/2, n_c/2]
 
-    Y, X = np.ogrid[:n_c, :n_r]
-    
-    if n_r/2 == n_r//2:
-        Y = Y + 0.49
+    X, Y = np.ogrid[:n_r, :n_c]
+
+    # Adjust for pixel centers if image dimensions are even
+    if n_r % 2 == 0:
+        Y = Y + 0.5
     else:
         centre[1] = centre[1] - 0.5
-    if n_c/2 == n_c//2:
-        X = X + 0.49
+    if n_c % 2 == 0:
+        X = X + 0.5
     else:
         centre[0] = centre[0] - 0.5
-    
-    if radius is None: 
+
+    if radius is None:
         # use the smallest distance between the centre and image walls
         if in_radius is None:
             radius = np.floor(np.minimum(*centre))
@@ -64,11 +43,26 @@ def annular_mask(image_shape : tuple,
     dist_from_centre = np.sqrt((X - centre[0])**2 + (Y-centre[1])**2)
 
     mask = dist_from_centre <= radius
-    
+
     if(in_radius is not None):
         mask *= in_radius <= dist_from_centre
 
-    return mask.astype('uint8') 
+    # Calculate angles
+    angles = np.arctan2(Y - centre[1], X - centre[0]) # arctan2 handles all quadrants
+
+    # Normalize angles to be within [0, 2*pi)
+    angles = (angles + 2 * np.pi) % (2 * np.pi)
+
+    # Apply angle mask
+    if start_angle <= finish_angle:
+        angle_mask = (angles >= start_angle) * (angles <= finish_angle)
+    else:
+        # Handles cases where the angle range crosses the 0/2*pi boundary (e.g., 3*pi/2 to pi/2)
+        angle_mask = (angles >= start_angle) + (angles <= finish_angle)
+
+    mask *= angle_mask
+
+    return mask.astype('uint8')
 
 def is_torch(data):
     try:
@@ -103,9 +97,9 @@ def crop_or_pad(data, new_shape, padding_value = 0, shift = None):
         assert len(shift) == len(data_shape)
     else:
         shift = np.zeros(len(data_shape), dtype='int')
-
+    
     for dim in range(len(data_shape)):
-        if data_shape[dim] != new_shape[dim]:
+        if (new_shape[dim] > 0) & (data_shape[dim] != new_shape[dim]):
             if data_is_torch:
                 data = data.transpose(0, dim)
             else:
@@ -301,39 +295,104 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RangeSlider, TextBox
 import numpy as np
 
+def extract_pixels_on_patch(image, patch, linewidth=1.0):
+    """
+    Extract pixels from the image that lie on the boundary of a matplotlib patch.
+
+    Parameters:
+        image (np.ndarray): Input image, shape (H, W) or (H, W, C).
+        patch (matplotlib.patches.Patch): A matplotlib patch object (e.g., Circle, Rectangle, Ellipse).
+        linewidth (float): Width of the boundary to consider in pixels.
+
+    Returns:
+        pixels (np.ndarray): Pixel values on the patch edge.
+        mask (np.ndarray): Boolean mask of shape (H, W), True for edge pixels.
+    """
+    H, W = image.shape[:2]
+
+    # Create coordinate grid
+    yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+    coords = np.stack([xx.ravel(), yy.ravel()], axis=1)
+
+    # Get the transformed path
+    path = patch.get_path().transformed(patch.get_transform())
+
+    # Distance to the path (boundary)
+    distances = path.to_polygons()[0]  # Only outer path
+    path_poly = Path(distances)
+
+    # Compute signed distance from path
+    inside = path_poly.contains_points(coords)
+    
+    # Erode path to get interior just inside the stroke
+    path_in = patch.get_path().transformed(patch.get_transform().frozen())
+    shrink_patch = patch  # For true shrinking, you'd need custom geometry ops
+
+    # Recreate inner path with a slightly smaller shape
+    shrink_path = patch.get_path().transformed(
+        patch.get_transform().frozen().scale(1 - linewidth / patch.get_radius() if hasattr(patch, "get_radius") else 1.0)
+    ) if hasattr(patch, "get_radius") else None
+
+    # Approximate: take edge pixels as the difference between two masks
+    if hasattr(patch, "get_radius"):
+        from skimage.draw import disk
+        cy, cx = patch.center
+        r_outer = patch.get_radius()
+        r_inner = r_outer - linewidth / 2.0
+        outer_mask = np.zeros((H, W), dtype=bool)
+        inner_mask = np.zeros((H, W), dtype=bool)
+        rr, cc = disk((cy, cx), r_outer, shape=(H, W))
+        outer_mask[rr, cc] = True
+        rr, cc = disk((cy, cx), r_inner, shape=(H, W))
+        inner_mask[rr, cc] = True
+        edge_mask = outer_mask & ~inner_mask
+    else:
+        raise NotImplementedError("Only Circle patches are supported in this version.")
+
+    # Extract pixels
+    if image.ndim == 2:
+        pixels = image[edge_mask]
+    else:
+        pixels = image[edge_mask, :]
+
+    return pixels, edge_mask
+
 class markimage:
     def __init__(self, 
                  in_image, 
                  mark_shape='circle',
                  figsize=(10, 5),
+                 slider_start = 0.1,
                  kwargs_shape=dict(ec='pink', fc='None', linewidth=1),
                  **kwargs_for_imshow):
         kwargs_shape.setdefault('ec', 'pink')
         kwargs_shape.setdefault('fc', 'None')
         kwargs_shape.setdefault('linewidth', 1)
 
+        assert len(in_image.shape) == 2, 'mcemtools.markimage, input must be 2D image'
+
         self.mark_shape = mark_shape
-        self.fig, axs = plt.subplots(1, 2, figsize=figsize)
+        self.fig, axs = plt.subplots(1, 3, figsize=figsize)
         self.fig.subplots_adjust(bottom=0.45)
         self.im = axs[0].imshow(in_image, **kwargs_for_imshow)
         cm = self.im.get_cmap()
-
+        self.in_image = in_image
         _, bins, patches = axs[1].hist(in_image.flatten(), bins='auto')
         bin_centres = 0.5 * (bins[:-1] + bins[1:])
         col = (bin_centres - np.min(bin_centres)) / np.ptp(bin_centres)
         for c, p in zip(col, patches):
             plt.setp(p, 'facecolor', cm(c))
         axs[1].set_title('Histogram of pixel intensities')
-
-        slider_ax = self.fig.add_axes([0.25, 0.3, 0.4, 0.03])
+        self.ax2 = axs[2]
+        slider_ax = self.fig.add_axes([slider_start, 0.3, 0.4, 0.03])
         self.slider_thresh = RangeSlider(
             slider_ax, "", in_image.min(), in_image.max(), 
             valinit=(in_image.min(), in_image.max()))
         
         tb_min_ax = self.fig.add_axes([0.83, 0.3, 0.06, 0.03])
         tb_max_ax = self.fig.add_axes([0.93, 0.3, 0.06, 0.03])
-        self.tb_min = TextBox(tb_min_ax, 'min', initial=str(in_image.min()))
-        self.tb_max = TextBox(tb_max_ax, 'max', initial=str(in_image.max()))
+        self.tb_min = TextBox(tb_min_ax, 'min', initial=f'{in_image.min():.5f}')
+        self.tb_max = TextBox(tb_max_ax, 'max', initial=f'{in_image.max():.5f}')
 
         self.lower_limit_line = axs[1].axvline(self.slider_thresh.val[0], color='k')
         self.upper_limit_line = axs[1].axvline(self.slider_thresh.val[1], color='k')
@@ -351,9 +410,9 @@ class markimage:
             self.markshape = plt.Circle((cy, cx), circle_radius, **kwargs_shape)
             axs[0].add_patch(self.markshape)
 
-            sl1 = self.fig.add_axes([0.25, 0.2, 0.5, 0.03])
-            sl2 = self.fig.add_axes([0.25, 0.15, 0.5, 0.03])
-            sl3 = self.fig.add_axes([0.25, 0.1, 0.5, 0.03])
+            sl1 = self.fig.add_axes([slider_start, 0.2, 0.5, 0.03])
+            sl2 = self.fig.add_axes([slider_start, 0.15, 0.5, 0.03])
+            sl3 = self.fig.add_axes([slider_start, 0.1, 0.5, 0.03])
 
             self.slider_r = Slider(sl1, "", 0.0, cx, valinit=circle_radius)
             self.slider_cx = Slider(sl2, "", 0.0, in_image.shape[0], valinit=cx)
@@ -387,10 +446,10 @@ class markimage:
             axs[0].add_patch(self.markshape)
 
             sliders = {
-                'top_left_r': [0.25, 0.2, tl_r, h],
-                'top_left_c': [0.25, 0.15, tl_c, w],
-                'bot_right_r': [0.25, 0.1, br_r, h],
-                'bot_right_c': [0.25, 0.05, br_c, w],
+                'top_left_r': [slider_start, 0.2, tl_r, h],
+                'top_left_c': [slider_start, 0.15, tl_c, w],
+                'bot_right_r': [slider_start, 0.1, br_r, h],
+                'bot_right_c': [slider_start, 0.05, br_c, w],
             }
 
             for i, (name, (x, y, val, vmax)) in enumerate(sliders.items()):
@@ -412,6 +471,7 @@ class markimage:
         self.upper_limit_line.set_xdata([val[1], val[1]])
         self.tb_min.set_val(str(val[0]))
         self.tb_max.set_val(str(val[1]))
+        self.update2()
         self.fig.canvas.draw_idle()
 
     def on_min_thresh(self, text):
@@ -465,13 +525,57 @@ class markimage:
             textbox.set_val(str(slider.val))
         self.update2(val)
 
-    def update2(self, val):
+    import numpy as np
+
+    def circle_indices(self, shape, radius, center = None, tol=0.5):
+        """
+        Return the indices (i,j) of pixels lying on a circle of given radius
+        centered at the middle of the image.
+
+        Parameters
+        ----------
+        shape : tuple
+            Image shape (n_rows, n_cols).
+        radius : float
+            Radius of the circle in pixels.
+        tol : float
+            Tolerance: pixels are included if their distance from center
+            is within [r - tol, r + tol].
+
+        Returns
+        -------
+        indi, indj : arrays of int
+            Row and column indices of pixels on the circle.
+        """
+        nrows, ncols = shape
+        if center is None:
+            ic, jc = nrows/2, ncols/2  # center of image
+        else:
+            ic, jc = center
+
+        y, x = np.ogrid[:nrows, :ncols]
+        dist = np.sqrt((y - ic)**2 + (x - jc)**2)
+
+        mask = np.abs(dist - radius) <= tol
+        indi, indj = np.nonzero(mask)
+
+        return indi, indj
+
+
+    def update2(self, val = None):
         if self.mark_shape == 'circle':
             r = self.slider_r.val
             cx = self.slider_cx.val
             cy = self.slider_cy.val
             self.markshape.set_center((cy, cx))
             self.markshape.set_radius(r)
+
+            indsi, indsj = self.circle_indices(self.in_image.shape, r, center = (cx, cy))
+            underlying_pixels = self.in_image[indsi, indsj]
+            self.ax2.cla()
+            self.ax2.plot(underlying_pixels, '.-')
+            self.ax2.set_ylim([self.im.norm.vmin, self.im.norm.vmax])
+
         if self.mark_shape == 'rectangle':
             r1 = self.slider_top_left_r.val
             c1 = self.slider_top_left_c.val
@@ -481,140 +585,6 @@ class markimage:
             self.markshape.set_width(abs(c2 - c1))
             self.markshape.set_height(abs(r2 - r1))
         self.fig.canvas.draw_idle()
-
-
-class markimage_old:
-    def __init__(self, 
-                 in_image, 
-                 mark_shape = 'circle',
-                 figsize=(10, 5),
-                 kwargs_shape = dict(ec = 'pink', fc = 'None', linewidth = 1),
-                 **kwargs_for_imshow):
-        kwargs_shape.setdefault('ec', 'pink')
-        kwargs_shape.setdefault('fc', 'None')
-        kwargs_shape.setdefault('linewidth', 1)
-
-        self.mark_shape = mark_shape
-        self.fig, axs = plt.subplots(1, 2, figsize=figsize)
-        self.fig.subplots_adjust(bottom=0.4)
-        # cm = plt.colormaps["Spectral"]
-        self.im = axs[0].imshow(in_image, **kwargs_for_imshow)
-        cm = self.im.get_cmap()
-        _, bins, patches = axs[1].hist(in_image.flatten(), bins='auto')
-        bin_centres = 0.5 * (bins[:-1] + bins[1:])
-        # scale values to interval [0,1]
-        col = bin_centres - min(bin_centres)
-        col /= max(col)
-        for c, p in zip(col, patches):
-            plt.setp(p, 'facecolor', cm(c))
-        axs[1].set_title('Histogram of pixel intensities')
-        
-        # Create the RangeSlider
-        slider_ax = self.fig.add_axes([0.25, 0.25, 0.6, 0.03])
-        slider = RangeSlider(slider_ax, "Threshold", 
-                             in_image.min(), 
-                             in_image.max(), 
-                             valinit=(in_image.min(), in_image.max()))
-        # Create the Vertical lines on the histogram
-        self.lower_limit_line = axs[1].axvline(slider.val[0], color='k')
-        self.upper_limit_line = axs[1].axvline(slider.val[1], color='k')
-        slider.on_changed(self.update)
-        
-        if(self.mark_shape == 'circle'):
-            cx, cy = in_image.shape
-            cx = cx / 2
-            cy = cy / 2
-            circle_radius = cx if cx < cy else cy
-            sl1 = plt.axes([0.25, 0.15, 0.6, 0.03])
-            sl2 = plt.axes([0.25, 0.1,  0.6, 0.03])
-            sl3 = plt.axes([0.25, 0.05, 0.6, 0.03])
-
-            self.markshape = plt.Circle(
-                (cy,cx), circle_radius, **kwargs_shape)
-            axs[0].add_patch(self.markshape)
-            self.slider_r = Slider(sl1, 
-                'radius', 0.0, self.im.get_array().shape[0]/2, 
-                valinit = circle_radius)
-            self.slider_cx = Slider(sl2,
-                'centre_x', 0.0, self.im.get_array().shape[0], valinit = cx)
-            self.slider_cy = Slider(sl3, 
-                'centre_y', 0.0, self.im.get_array().shape[1], valinit = cy)
-            self.slider_r.on_changed(self.update2)
-            self.slider_cx.on_changed(self.update2)
-            self.slider_cy.on_changed(self.update2)
-
-        if(self.mark_shape == 'rectangle'):
-            bot_right_r, bot_right_c = in_image.shape
-            top_left_r = bot_right_r * 0.1
-            top_left_c = bot_right_c * 0.1
-            bot_right_r = bot_right_r * 0.9
-            bot_right_c = bot_right_c * 0.9
-
-            s_top_left_r = plt.axes([0.25, 0.2, 0.6, 0.03])
-            s_top_left_c = plt.axes([0.25, 0.15, 0.6, 0.03])
-            s_bot_right_r = plt.axes([0.25, 0.1, 0.6, 0.03])
-            s_bot_right_c = plt.axes([0.25, 0.05, 0.6, 0.03])
-
-            self.markshape = plt.Rectangle(
-                (top_left_r, top_left_c), 
-                bot_right_r - top_left_r, 
-                bot_right_c - top_left_c, **kwargs_shape)
-            axs[0].add_patch(self.markshape)
-            self.slider_top_left_r = Slider(
-                s_top_left_r, 'top_left_r', 0.0, 
-                self.im.get_array().shape[0], valinit = top_left_r)
-            self.slider_top_left_c = Slider(
-                s_top_left_c, 'top_left_c', 0.0, 
-                self.im.get_array().shape[1], valinit = top_left_c)
-            self.slider_bot_right_r = Slider(
-                s_bot_right_r, 's_bot_right_r', 0.0, 
-                self.im.get_array().shape[0], valinit = bot_right_r)
-            self.slider_bot_right_c = Slider(
-                s_bot_right_c, 'bot_right_c', 0.0, 
-                self.im.get_array().shape[1], valinit = bot_right_c)
-
-            self.slider_top_left_r.on_changed(self.update2)
-            self.slider_top_left_c.on_changed(self.update2)
-            self.slider_bot_right_r.on_changed(self.update2)
-            self.slider_bot_right_c.on_changed(self.update2)
-        
-        plt.show()
-    
-    def update(self, val):
-        # The val passed to a callback by the RangeSlider will
-        # be a tuple of (min, max)
-    
-        # Update the image's colormap
-        self.im.norm.vmin = val[0]
-        self.im.norm.vmax = val[1]
-    
-        # Update the position of the vertical lines
-        self.lower_limit_line.set_xdata([val[0], val[0]])
-        self.upper_limit_line.set_xdata([val[1], val[1]])
-    
-        # Redraw the figure to ensure it updates
-        self.fig.canvas.draw_idle()
-
-    def update2(self, val):
-        if(self.mark_shape == 'circle'):
-            r = self.slider_r.val
-            cx = self.slider_cx.val
-            cy  = self.slider_cy.val
-            self.markshape.set_center((cy, cx))
-            self.markshape.set_radius(r)
-            
-        if(self.mark_shape == 'rectangle'):
-            self.markshape.set_width(np.abs(
-                self.slider_bot_right_c.val - self.slider_top_left_c.val))
-            self.markshape.set_height(np.abs(
-                self.slider_bot_right_r.val - self.slider_top_left_r.val))
-            self.markshape.set_xy((
-                self.slider_top_left_c.val,
-                self.slider_top_left_r.val))
-
-        self.fig.canvas.draw_idle()
-#---------end of markimage class------------------
-
 
 def remove_labels(label_map, labels_to_remove):
     if(labels_to_remove.shape[0] > 0):

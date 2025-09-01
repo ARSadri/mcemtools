@@ -51,7 +51,7 @@ def polar2image(data, image_shape, dataq = None, centre = None,
             Use dataq as the output of image2polar then give its processed 
             version to this function as dataq...., now, see? you hadn't paid
             attention...am I right? It is very importnt, isn't it? ... 
-            Yes! it is importnat....Hey!, I said it is important.
+            Yes! it is importnat....Hey!, I said it is important...Oh.
     """
     n_rows, n_clms = image_shape
     if dataq is None:
@@ -102,7 +102,7 @@ def image2polar(data,
             the polar coordinates. One can call that function first to
             generate coordinates, then pass the coordinates to these
             two funcitons (image2polar and polar2image) any number of times.
-            If user does not call this function abefore hand and does not 
+            If user does not call this function before hand and does not 
             provide it to image2polar or polar2image, the functions will 
             call it. get_polar_coords is a fast function... No OOP here.
     """

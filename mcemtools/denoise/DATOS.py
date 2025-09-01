@@ -483,4 +483,4 @@ if __name__ == '__main__':
             inds, status = DATOS_sampler()
             if not status:
                 break
-            print(inds)
+            # print(inds)

@@ -159,3 +159,7 @@ History
 0.9.11 (2025-05-30)
 -------------------
 * fixed capsul network to handle any number of features in the output
+
+0.9.13 (2025-09-01)
+-------------------
+* Annular mask bug fixed for non-square inputs
