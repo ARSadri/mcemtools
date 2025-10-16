@@ -15,8 +15,15 @@ def mask2D_to_4D(mask2D, data4D_shape):
 import numpy as np
 
 def annular_mask(image_shape : tuple,
-                 centre:tuple = None, radius:float=None, in_radius:float=None,
-                 start_angle:float = 0, finish_angle:float = 2*np.pi):
+                 centre:tuple = None, outer_radius:float=None, inner_radius:float=None,
+                 start_angle:float = 0, finish_angle:float = 2*np.pi,
+                 radius = None, in_radius = None):
+    
+    if outer_radius is not None:
+        radius = outer_radius
+    if inner_radius is not None:
+        in_radius = inner_radius
+    
     n_r, n_c = image_shape
     if centre is None: # use the middle of the image
         centre = [n_r/2, n_c/2]
@@ -196,6 +203,10 @@ class image_by_windows:
         self.grid_shape = (len(rows), len(clms))
         self.grid = np.array([self.grid_rows.ravel(), self.grid_clms.ravel()]).T
         self.n_pts = self.grid.shape[0]
+        grid_locations=0*self.grid.copy()
+        grid_locations[:, 0] = self.grid[:, 1].copy()
+        grid_locations[:, 1] = (self.grid[:, 0].copy().max() - self.grid[:, 0].copy())
+        self.grid_locations_for_subplots = grid_locations.copy()
         
     def image2views(self, img):
         all_other_dims = ()

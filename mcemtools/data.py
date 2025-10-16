@@ -37,11 +37,32 @@ def open_muSTEM_binary(filename):
     #Read data and reshape as required.
     return np.reshape(np.fromfile(filename, dtype = d_type),(y,x))
 
-def load_raw(filename, scanSize: tuple[int, int], detSize: tuple[int, int]):
-    dt = np.dtype([('data',  f'({detSize[0]},{detSize[1]})single'),
-                   ('footer',f'{scanSize[0]}single')])
-    data = np.fromfile(file=filename,dtype=dt)["data"].reshape(scanSize+detSize)
-    return data
+def check_raw_filename(fpath, scan_shape = None):
+    import re
+    from pathlib import Path
+    fpath = Path(fpath)
+
+    pattern = r"^scan_x(\d+)_y(\d+)\.raw$"
+    
+    match = re.match(pattern, fpath.name)
+    if match:
+        nx, ny = map(int, match.groups())
+        if scan_shape is not None:
+            if (ny, nx) != scan_shape:
+                print(f"load_raw: Be careful! It seems the given scan_shape {scan_shape} "
+                    f"does not match the filename ({ny}, {nx}).")
+        return ny, nx
+
+def load_raw(fpath, scan_shape: tuple[int, int] = None, 
+             detector_shape: tuple[int, int] = (128, 128), 
+             dtype = np.float32, footer_length = 256):
+    
+    scan_shape_ = check_raw_filename(fpath, scan_shape)
+    if scan_shape is None:
+        scan_shape = scan_shape_
+    dt = np.dtype([("data", dtype, detector_shape),("footer", dtype, footer_length)])
+    dataset = np.fromfile(fpath, dtype = dt)["data"].reshape(scan_shape + detector_shape)
+    return dataset
 
 class mesh_maker_2D:
     def __init__(self, input_image, ground_truth = None):
@@ -535,9 +556,6 @@ class segmented_to_4D:
 
         _, _, com_x, com_y, _, _ = self.get_stat()
 
-        # com_x = -scipy.ndimage.rotate(com_x, -90)
-        # com_y = -scipy.ndimage.rotate(com_y, -90)
-
         filtered_com_x = scipy.signal.convolve2d(com_x, kernel)
         filtered_com_y = scipy.signal.convolve2d(com_y, kernel)
 
@@ -546,7 +564,7 @@ class segmented_to_4D:
 
         return filtered_com_x, filtered_com_y, kernel
     
-def apply_detector_response(d4d, detector_response, verbose = False,
+def apply_detector_response_old(d4d, detector_response, verbose = False,
                             return_by_channle = True, segment_is_one_pixels = True):
     """
     Replace values in a multi-dimensional image based on a segmented labeled image.
@@ -589,6 +607,67 @@ def apply_detector_response(d4d, detector_response, verbose = False,
     if verbose: pbar = printprogress(d4d.shape[0] * d4d.shape[1])
     for i, j in np.ndindex(d4d.shape[:2]):
         segments_sum = d4d[None, i, j] * detector_response
+        if return_by_channle:
+            data_by_ch[i, j] = segments_sum.sum((1, 2))
+        else:
+            if segment_is_one_pixels:
+                img_by_ch = segments_sum.sum((1, 2))
+                modified_d4d[i, j] = (img_by_ch[:, None, None] * detector_response).sum(0)
+            else:
+                modified_d4d[i, j] = segments_sum.sum(0)
+        if verbose: pbar()
+                
+
+    if return_by_channle:
+        return data_by_ch
+    else:
+        return modified_d4d
+    
+def apply_detector_response(d4d, detector_response, detector_response_input = None, 
+                            verbose = False, return_by_channle = True, 
+                            segment_is_one_pixels = True):
+    """
+    Replace values in a multi-dimensional image based on a segmented labeled image.
+    
+    Parameters:
+    ----------
+    d4d : np.ndarray
+        The multi-dimensional image array with shape (n_x, n_y, n_r, n_c),
+        where each (n_r, n_c) slice is a single image.
+    detector_response : np.ndarray of shape n_ch x n_r x n_c
+        The area around the detector should be set to 0, and each segment
+        should appear in a single channle with its artifacts.
+
+    Returns:
+    -------
+    np.ndarray
+        The modified image with each segment's values replaced by their sums.
+
+    Raises:
+    ------
+    ValueError
+        If detector_response does not match the last two dimensions of d4d.
+    
+    Notes:
+    ------
+    This function sums the values in each segment of d4d, defined by detector_response.
+    Each segment (where detector_response == i) is replaced by the segment's sum in the
+    modified d4d.
+    """
+    if detector_response_input is None: detector_response_input = detector_response.copy()
+    # if detector_response.shape[1:] != d4d.shape[-2:]:
+    #     raise ValueError("The shape of detector_response must match the last two dimensions of d4d.")
+
+    
+    if return_by_channle:
+        data_by_ch = np.zeros(
+            (d4d.shape[0], d4d.shape[1], len(detector_response)), dtype = d4d.dtype)
+    else:
+        modified_d4d = np.zeros(d4d.shape[:2] + detector_response.shape[1:], dtype = d4d.dtype)
+
+    if verbose: pbar = printprogress(d4d.shape[0] * d4d.shape[1])
+    for i, j in np.ndindex(d4d.shape[:2]):
+        segments_sum = d4d[None, i, j] * detector_response_input
         if return_by_channle:
             data_by_ch[i, j] = segments_sum.sum((1, 2))
         else:
@@ -692,3 +771,284 @@ def generate_indices(labels_shape, batch_size, method = 'class_based'):
                         bunch_of_samples[gcnt * batch_size: (gcnt + 1) * batch_size]
         
     return samples
+
+
+def segmented_detector_maker(image_length: int,
+                             rings_radii_ranges: list,
+                             rings_num_segments: list,
+                             centre: tuple = None):
+    """
+    Create a segmented annular detector mask (generalized multi-ring design).
+
+    The detector is divided radially and angularly:
+      - The radial boundaries are defined by `radii`.
+      - Each ring (region between successive radii) is split into a given
+        number of angular segments.
+
+    This generalizes detectors such as PANTHER by allowing arbitrary
+    radii and segment counts per ring.
+
+    Parameters
+    ----------
+    length : int
+        Linear size (in pixels) of the square diffraction pattern or detector.
+    radii : list of float
+        Sorted list of outer radii (in pixels) for each ring.
+        Example: [32, 64, 96] defines four rings with boundaries
+        [0–32], [32–64], [64–96], [96–∞].
+    num_segments : list of int
+        List of the same length as `radii`, specifying how many
+        angular segments each ring should be divided into.
+        Example: [4, 8, 12, 16].
+    centre : tuple of float, optional
+        (row, column) coordinates of the detector center.
+        If None, defaults to the image midpoint.
+
+    Returns
+    -------
+    detector_masks : np.ndarray
+        Array of shape (total_segments, length, length) containing binary masks.
+        Each plane corresponds to one segment of the detector.
+        Masks are 1 where the segment covers and 0 elsewhere.
+
+    Example
+    -------
+    >>> det = segmented_detector_maker(
+    ...     length=128,
+    ...     radii=[32, 64, 96],
+    ...     num_segments=[4, 8, 12, 16]
+    ... )
+    >>> det.shape
+    (4 + 8 + 12 + 16, 128, 128)
+    >>> np.sum(det, axis=0).max()
+    1.0  # Each pixel belongs to exactly one segment
+    """
+    # --- Setup
+    
+    try:
+        if rings_num_segments == int(rings_num_segments):
+            rings_num_segments = np.array([rings_num_segments]*len(rings_radii_ranges))
+    except: pass
+    
+    if len(rings_radii_ranges) == len(rings_num_segments) - 1:
+        rings_radii_ranges.append([rings_radii_ranges[-1][1], np.inf])
+
+
+    n_rings = len(rings_radii_ranges)
+    total_segments = sum(rings_num_segments)
+    masks = np.zeros((total_segments, image_length, image_length))
+
+    seg_idx = 0
+    for ring_idx in range(n_rings):
+        n_seg = rings_num_segments[ring_idx]
+        in_r = rings_radii_ranges[ring_idx][0]
+        out_r = rings_radii_ranges[ring_idx][1]
+        # Angular division for this ring
+        for s in range(n_seg):
+            start_angle = 2 * np.pi * s / n_seg
+            finish_angle = 2 * np.pi * (s + 1) / n_seg
+
+            masks[seg_idx] = mcemtools.annular_mask(
+                (image_length, image_length),
+                centre=centre,
+                outer_radius=out_r,
+                inner_radius=in_r,
+                start_angle=start_angle,
+                finish_angle=finish_angle,
+            )
+            seg_idx += 1
+    masks[:, masks.sum(0) > 0] = masks[:, masks.sum(0) > 0] / masks.sum(0)[None, masks.sum(0) > 0]
+    return masks
+
+# def test_segmented_detector_maker():
+#     det = segmented_detector_maker(128, [[0, 16], [16, 32]], [4, 4, 4])
+#     printv(det)
+#     det_labels = (det * np.arange(len(det))[:, None, None]).sum(0)
+#     _ = plt_imshow_subplots(np.concatenate([det, det_labels[None]], axis=0))
+
+def panther_maker(length, bf_radius, centre=None, RING_0_to_1_RATIO=0.53125):
+    """
+    Construct a PANTHER-style segmented detector mask for 4D-STEM analysis.
+
+    The PANTHER detector concept divides the bright-field (BF) disk into 
+    three concentric annular rings, each further subdivided into four 
+    quadrants (12 total segments). This function generates corresponding
+    binary masks for each segment in reciprocal-space coordinates.
+
+    The generated masks can be used to simulate or analyze detector
+    responses by integrating the diffraction pattern intensity within 
+    each segment.
+
+    Parameters
+    ----------
+    length : int
+        Linear size (in pixels) of the square diffraction pattern or detector.
+    bf_radius : float
+        Radius (in pixels) of the bright-field (BF) disk.
+    centre : tuple of float, optional
+        (row, column) coordinates of the disk center. If None, the center
+        is assumed to be at the image midpoint.
+    RING_0_to_1_RATIO : float, optional
+        Fractional radius defining the inner ring boundary relative to the
+        bright-field radius (default = 0.53125).
+
+    Returns
+    -------
+    det_resp_new : np.ndarray
+        Array of shape (12, length, length) containing the PANTHER detector masks.
+        Each plane `det_resp_new[i]` corresponds to one detector segment.
+        Masks are normalized such that the sum across all 12 segments equals 1.
+
+    Notes
+    -----
+    - The detector is built from three concentric rings:
+        1. Inner disk to `RING_0_to_1_RATIO * bf_radius`
+        2. `RING_0_to_1_RATIO * bf_radius` to `bf_radius`
+        3. `bf_radius` to the outer edge of the array
+      Each ring is split into 4 quadrants (π/2 angular width).
+    
+    - The initial (0–11) channel ordering is rearranged to match the 
+      PANTHER geometric channel layout.
+
+    - The function depends on `mcemtools.annular_mask`, which should return 
+      a binary mask for a given annular sector.
+
+    Example
+    -------
+    >>> panther = panther_maker(length=256, bf_radius=80)
+    >>> panther.shape
+    (12, 256, 256)
+    >>> np.sum(panther, axis=0).max()
+    1.0  # Each pixel belongs to exactly one detector segment
+    """
+    mask_ring = np.zeros((3, 4, length, length))
+    for cnt in range(4):
+        mask_ring[0, cnt] = mcemtools.annular_mask(
+            (length, length),
+            centre=centre,
+            radius=RING_0_to_1_RATIO * bf_radius,
+            start_angle=cnt * np.pi/2,
+            finish_angle=(cnt + 1) * np.pi/2,
+        )
+        mask_ring[1, cnt] = mcemtools.annular_mask(
+            (length, length),
+            centre=centre,
+            in_radius=RING_0_to_1_RATIO * bf_radius,
+            radius=bf_radius,
+            start_angle=cnt * np.pi/2,
+            finish_angle=(cnt + 1) * np.pi/2,
+        )
+        mask_ring[2, cnt] = mcemtools.annular_mask(
+            (length, length),
+            centre=centre,
+            in_radius=bf_radius,
+            start_angle=cnt * np.pi/2,
+            finish_angle=(cnt + 1) * np.pi/2,
+        )
+
+    det_resp = mask_ring.reshape(-1, length, length)
+
+    det_resp_new = 0 * det_resp.copy() - 1
+    current_ch = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    new_ch = [0, 9, 6, 3, 1, 10, 7, 4, 2, 11, 8, 5]
+    for ch, new_ch in zip(current_ch, new_ch):
+        det_resp_new[new_ch] = det_resp[ch].copy()
+
+    det_resp_new = det_resp_new / det_resp_new.sum(0)
+    if (det_resp_new.astype('int') == det_resp_new).all():
+        det_resp_new = det_resp_new.astype('int')
+
+    return det_resp_new
+
+# def test_panther_maker():
+#     panth_response = panther_maker(length = 96, bf_radius = 26, centre = (48, 48)).astype('float32')
+#     panth_response /= panth_response.sum(0)
+#     plt_imshow(panth_response.sum(0))
+#     print(np.unique(panth_response.ravel()))
+#     plt_imshow_subplots(panth_response, frame_shape = (4, 3))
+#     plt_imshow((panth_response*np.arange(12)[:, None, None]).sum(0), figsize = (18, 18), show_values=True)
+
+#     print(f'panth_response: {np.unique(panth_response.ravel())}')
+
+
+def apply_detresp_memory_efficient(exp_data, detector_response, tile_x=16, tile_y=16, verbose = True):
+    """
+    exp_data: (n_x, n_y, n_r, n_c)
+    detector_response: (n_ch, n_r, n_c)
+    returns: (n_x, n_y, n_ch)
+    """
+    n_x, n_y, _, _ = exp_data.shape
+    n_ch = detector_response.shape[0]
+    exp_data_ch = np.empty((n_x, n_y, n_ch), dtype=exp_data.dtype)
+    if verbose:
+        pbar = printprogress(tile_x * tile_y, 
+            title = f'memory efficient detector response for {tile_x * tile_y} tiles')
+    for ix in range(0, n_x, tile_x):
+        ix_end = min(ix + tile_x, n_x)
+        for iy in range(0, n_y, tile_y):
+            iy_end = min(iy + tile_y, n_y)
+
+            sub = exp_data[ix:ix_end, iy:iy_end]
+
+            sub_ch = (sub[:, :, None, :, :] * detector_response[None, None, :, :, :]).sum(axis=(-1, -2))
+
+            exp_data_ch[ix:ix_end, iy:iy_end] = sub_ch
+            if verbose: pbar()
+    if verbose: del pbar
+    return exp_data_ch
+
+def unsplit_electrons(
+    exp_data,
+    first_electron_peak_ADU=591.0,
+    threshold=0.75,
+    kernel=None,
+):
+    """
+    Recombine split electron events in pixelated detector data.
+
+    When a single electron hits a pixelated detector, its charge often spreads
+    over adjacent pixels. This function estimates the central pixel associated
+    with each electron event and suppresses the surrounding split signals.
+
+    Parameters
+    ----------
+    exp_data : np.ndarray
+        Input detector data, typically of shape (n_x, n_y, n_r, n_c). 
+        The function will convolve each frame independently along the last two axes.
+
+    first_electron_peak_ADU : float, default=591.0
+        Expected signal amplitude (in ADU) of a single-electron peak.
+        Used to set the intensity threshold.
+
+    threshold : float, default=0.75
+        Fraction of `first_electron_peak_ADU` used as the cutoff for identifying
+        electron event centers. Pixels above this threshold (after convolution)
+        are kept; others are suppressed.
+
+    kernel : np.ndarray or None, optional
+        Convolution kernel used to merge split charges. If `None`, a default
+        3×3 kernel is used:
+            [[1, 1, 1],
+             [1, 2, 1],
+             [1, 1, 1]] / 2
+        (expanded to 4D for compatibility with input dimensions).
+
+    Returns
+    -------
+    np.ndarray
+        Processed array of the same shape as `exp_data`, where pixels not
+        belonging to identified electron events have been suppressed.
+    """
+    from scipy.ndimage import convolve, maximum_filter
+
+    if kernel is None:
+        kernel = np.array([[1, 1, 1],
+                           [1, 2, 1],
+                           [1, 1, 1]], dtype=np.float32)[None, None, :, :] / 2
+
+    out = convolve(exp_data, kernel, mode="constant", cval=0)
+    mask = out > first_electron_peak_ADU * threshold
+    mask_expanded = maximum_filter(mask.astype(np.int32), size=(1, 1, 3, 3))
+    exp_data_filtered = exp_data * mask_expanded
+
+    return exp_data_filtered

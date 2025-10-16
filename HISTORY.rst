@@ -163,3 +163,7 @@ History
 0.9.13 (2025-09-01)
 -------------------
 * Annular mask bug fixed for non-square inputs
+
+0.9.14 (2025-10-16)
+-------------------
+* Added Transformerregressir

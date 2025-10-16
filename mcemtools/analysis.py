@@ -6,6 +6,8 @@ import scipy
 from itertools import product
 import torch
 import mcemtools
+import torch.nn.functional as F
+from typing import Tuple
 
 def interpolate_surface(grid_locations, values, resolution=None, method='cubic'):
     from scipy.interpolate import griddata
@@ -1063,25 +1065,370 @@ def force_stem_4d(a4d, b4d):
     a4d[stem == 0] = 0
     return a4d
 
-def compute_pixel_histograms(images, bins=np.arange(10)):
+def compute_pixel_histograms(images, bins):
     """
-    Compute histograms for each pixel position across a stack of images.
-    
-    Parameters:
-    - images: np.ndarray of shape (N, M, M), where N is the number of images and M x M is the image size.
-    - bins: np.ndarray, the bin edges to use for histogram calculation.
-    
-    Returns:
-    - histograms: np.ndarray of shape (len(bins)-1, M, M), where each slice corresponds to a bin count per pixel.
+    Compute per-pixel histograms across a stack of images.
+
+    Each pixel position (row, column) in the image stack is analyzed
+    independently to estimate how its intensity values are distributed
+    across the provided bins. The result is a 3D array representing
+    normalized histograms (probability distributions) for every pixel.
+
+    Parameters
+    ----------
+    images : np.ndarray
+        Array of shape (n_images, height, width) or (n_images, ...),
+        containing a stack of 2D (or higher-dimensional) images.
+        Each image should have the same shape and dtype (numeric).
+    bins : np.ndarray
+        Array of bin edges (length = num_bins + 1) defining the histogram
+        intervals, e.g. from `np.linspace(min_val, max_val, num_bins + 1)`.
+
+    Returns
+    -------
+    histograms : np.ndarray
+        Array of shape (num_bins, height, width), containing the normalized
+        per-pixel histograms.
+        Each element `histograms[b, i, j]` gives the fraction of images
+        whose pixel at position (i, j) falls into bin `b`.
+
+    Notes
+    -----
+    - The histograms are normalized by the number of input images
+      (`n_images`), so the sum across bins for each pixel equals 1.0.
+    - Uses `np.digitize` internally, so the last bin includes values
+      that equal its right edge.
+
+    Example
+    -------
+    >>> images = np.random.rand(100, 64, 64)
+    >>> bins = np.linspace(0, 1, 11)
+    >>> hists = compute_pixel_histograms(images, bins)
+    >>> hists.shape
+    (10, 64, 64)
     """
+    n_images = len(images)
     num_bins = len(bins) - 1
-    N, M, _ = images.shape
-    
-    histograms = np.zeros((num_bins, M, M), dtype=int)
-    
+
+    # Initialize histogram array: (num_bins, height, width)
+    histograms = np.zeros((num_bins,) + images.shape[1:], dtype=int)
+
+    # Assign each pixel in all images to a bin index (0 to num_bins-1)
     binned = np.digitize(images, bins=bins) - 1
 
+    # Count how often each pixel falls into each bin
     for b in range(num_bins):
         histograms[b] = np.sum(binned == b, axis=0)
 
-    return histograms
+    # Normalize to convert counts to probabilities
+    histograms = histograms.astype('float32') / float(n_images)
+
+    return histograms.astype('float32')
+
+def find_cdf_divisions(cdf, x_vals, M):
+    """
+    Divide a CDF into M equally spaced probability intervals and find
+    the corresponding x-value thresholds.
+
+    Parameters
+    ----------
+    cdf : np.ndarray
+        Monotonically increasing array of CDF values (between 0 and 1).
+    x_vals : np.ndarray
+        Corresponding x-values for the CDF.
+    M : int
+        Number of desired bins.
+
+    Returns
+    -------
+    targets : np.ndarray
+        Target CDF values (quantiles) at which thresholds are determined.
+    thresholds : np.ndarray
+        Corresponding x-values that divide the data into M equal-probability bins.
+    """
+    # Define target CDF values (avoid exactly 0 and 1 to stay within interpolation range)
+    targets = np.linspace(1 / M, 1 - 1 / M, M - 1)
+    
+    # Interpolate to find x thresholds corresponding to those CDF levels
+    thresholds = np.interp(targets, cdf, x_vals)
+    
+    return targets, thresholds
+
+def test_find_cdf_divisions():
+    # ==== Example: bimodal distribution ====
+
+    # Generate data: two normal distributions (each 10,000 samples)
+    np.random.seed(0)
+    data1 = np.random.normal(0, 0.5, 10_000)
+    data2 = np.random.normal(2, 0.5, 10_000)
+    data = np.concatenate([data1, data2])
+
+    # Sort data for CDF computation
+    x_vals = np.sort(data)
+    cdf = np.arange(1, len(x_vals) + 1) / len(x_vals)
+
+    # Find divisions using CDF-based method
+    M = 16  # number of desired bins
+    targets, thresholds = find_cdf_divisions(cdf, x_vals, M)
+
+    # ==== Plot CDF with target lines ====
+    plt.figure(figsize=(8, 4))
+    plt.plot(x_vals, cdf, label="CDF", color='C0')
+    for t, thr in zip(targets, thresholds):
+        plt.axhline(t, color='gray', linestyle='--', linewidth=0.8)
+        plt.axvline(thr, color='red', linestyle='--', linewidth=1)
+    plt.title("CDF and Equal-Probability Divisions")
+    plt.xlabel("x")
+    plt.ylabel("CDF")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # ==== Plot histogram and overlay thresholds ====
+    plt.figure(figsize=(8, 4))
+    plt.hist(data, bins=100, density=True, color='lightblue', edgecolor='k')
+    for thr in thresholds:
+        plt.axvline(thr, color='red', linestyle='--', linewidth=1)
+    plt.title("Histogram with Equal-Probability Bin Thresholds")
+    plt.xlabel("x")
+    plt.ylabel("Density")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.show()
+
+def get_cc(vec_a: torch.Tensor, vec_b: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """
+    Cross-correlation between two 1D vectors (zero-mean, unit-std).
+    Matches user's definition but stabilized a bit to avoid div-by-zero.
+    """
+    va = vec_a.view(-1).float()
+    vb = vec_b.view(-1).float()
+    a_std = va.std(unbiased=False)
+    b_std = vb.std(unbiased=False)
+    if a_std.item() == 0 or b_std.item() == 0:
+        return torch.tensor(0.0, device=va.device)
+    vec_1 = (va - va.mean()) / (a_std + eps)
+    vec_2 = (vb - vb.mean()) / (b_std + eps)
+    return (vec_1 * vec_2).mean()
+
+def build_affine_theta(trans_row: float, trans_col: float,
+                       scale_row: float, scale_col: float,
+                       rot_angle: float,
+                       H: int, W: int, device: torch.device):
+    """
+    Build 2x3 affine theta in normalized coords for F.affine_grid.
+    Parameters trans_row/trans_col are in PIXELS.
+    scale_row: scaling along image rows (y axis).
+    scale_col: scaling along image cols (x axis).
+    rot_angle: radians (positive = CCW).
+    """
+    # rotation
+    c = torch.cos(torch.tensor(rot_angle, device=device))
+    s = torch.sin(torch.tensor(rot_angle, device=device))
+
+    # linear part in physical (x,y) pixel axes: A = R @ S
+    # note: x corresponds to columns, y to rows
+    A = torch.zeros((2, 2), device=device)
+    # S = diag(scale_col, scale_row)
+    A[0, 0] = c * scale_col   # a11 (x <- x)
+    A[0, 1] = -s * scale_row  # a12 (x <- y)
+    A[1, 0] = s * scale_col   # a21 (y <- x)
+    A[1, 1] = c * scale_row   # a22 (y <- y)
+
+    # convert pixel translations to normalized coords in [-1,1] (align_corners=True)
+    if W > 1:
+        tx_norm = 2.0 * trans_col / (W - 1)
+    else:
+        tx_norm = 0.0
+    if H > 1:
+        ty_norm = 2.0 * trans_row / (H - 1)
+    else:
+        ty_norm = 0.0
+
+    theta = torch.zeros((2, 3), device=device)
+    theta[:, :2] = A
+    theta[0, 2] = tx_norm
+    theta[1, 2] = ty_norm
+    return theta
+
+def warp_image_with_params(in_img: torch.Tensor,
+                           trans_row: float = 0, trans_col: float = 0,
+                           scale_row: float = 1, scale_col: float = 1,
+                           rot_angle: float = 0):
+    """
+    Warp in_img using the affine parameters. in_img shape can be (H,W) or (1,H,W) or (C,H,W).
+    Returns warped image same shape as input (except channel preserved).
+    """
+    # normalize shapes
+    x = in_img
+    if x.dim() == 2:
+        x = x.unsqueeze(0).unsqueeze(0)  # 1x1xHxW
+        squeeze_out = True
+    elif x.dim() == 3:
+        # C x H x W -> add batch
+        x = x.unsqueeze(0)               # 1xC x H x W
+        squeeze_out = True
+    elif x.dim() == 4:
+        # assume already has batch (not supported)
+        squeeze_out = False
+    else:
+        raise ValueError("in_img must be HxW, CxHxW, or BxCxHxW")
+
+    B, C, H, W = x.shape
+    device = x.device
+
+    theta = build_affine_theta(trans_row, trans_col, scale_row, scale_col, rot_angle, H, W, device)
+    theta = theta.unsqueeze(0)  # batch dim
+
+    # affine_grid + grid_sample (align_corners=True for consistent normalization)
+    grid = F.affine_grid(theta, size=(B, C, H, W), align_corners=True)  # BxHxWx2
+    warped = F.grid_sample(x, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+    if squeeze_out:
+        # remove batch dimension and if originally single-channel, remove channel too
+        warped = warped.squeeze(0)
+        if in_img.dim() == 2:
+            warped = warped.squeeze(0)
+    return warped
+
+def register_affine(in_image: torch.Tensor,
+                    target_image: torch.Tensor,
+                    n_iters: int = 200,
+                    lr: float = 1e-1,
+                    eps_numdiff: float = 1e-3,
+                    verbose: bool = False,
+                    device: torch.device = None) -> Tuple[float, float, float, float, float, torch.Tensor]:
+    """
+    Perform affine registration to maximize cross-correlation (get_cc).
+    Returns: (trans_row, trans_col, scale_row, scale_col, rot_angle, warped_image)
+    Notes:
+      - in_image and target_image should have same H,W. Accepts HxW or 1xHxW / CxHxW.
+      - Uses central finite differences for directional derivatives of the loss
+        (loss = - get_cc(warped, target)).
+    """
+    # dispatch device
+    if device is None:
+        device = in_image.device if isinstance(in_image, torch.Tensor) else torch.device('cpu')
+
+    # prepare tensors on device and float
+    inp = in_image.to(device=device, dtype=torch.float32)
+    tgt = target_image.to(device=device, dtype=torch.float32)
+
+    # ensure shape compatibility: use single-channel registration (flatten across channels)
+    # if multi-channel, we'll average channels when computing CC
+    def flatten_for_cc(img):
+        # img may be HxW, CxHxW, or 1xHxW
+        t = img
+        if t.dim() == 2:
+            return t.reshape(-1)
+        elif t.dim() == 3:
+            # channels present -> flatten across channels too
+            return t.reshape(-1)
+        elif t.dim() == 4:
+            return t.reshape(-1)
+        else:
+            raise ValueError("Unsupported image dims for CC")
+
+    # check shapes
+    # unify to at least CxHxW or HxW
+    if inp.dim() not in (2, 3):
+        raise ValueError("in_image must be HxW or CxHxW")
+    if tgt.dim() not in (2, 3):
+        raise ValueError("target_image must be HxW or CxHxW")
+
+    # ensure same H,W
+    H_in = inp.shape[-2]
+    W_in = inp.shape[-1]
+    H_t = tgt.shape[-2]
+    W_t = tgt.shape[-1]
+    if (H_in != H_t) or (W_in != W_t):
+        raise ValueError("in_image and target_image must have same H,W")
+
+    # initialize parameters (start with identity)
+    trans_row = 0.0
+    trans_col = 0.0
+    scale_row = 1.0
+    scale_col = 1.0
+    rot_angle = 0.0  # radians
+
+    params = ['trans_row', 'trans_col', 'scale_row', 'scale_col', 'rot_angle']
+    # list-style for convenience
+    pvals = torch.tensor([trans_row, trans_col, scale_row, scale_col, rot_angle], device=device, dtype=torch.float32)
+
+    # small helper to compute loss for a given param vector
+    def compute_loss_from_pvals(pvec):
+        tr = float(pvec[0].item())
+        tc = float(pvec[1].item())
+        sr = float(pvec[2].item())
+        sc = float(pvec[3].item())
+        ra = float(pvec[4].item())
+        warped = warp_image_with_params(inp, tr, tc, sr, sc, ra)
+        # flatten to vectors
+        wa = flatten_for_cc(warped)
+        tb = flatten_for_cc(tgt)
+        cc = get_cc(wa, tb)
+        # we want to maximize CC, so loss = -cc
+        return -cc, warped
+
+    # main optimization loop
+    for it in range(n_iters):
+        base_loss, base_warped = compute_loss_from_pvals(pvals)
+
+        # compute numerical gradient for each parameter using central difference
+        grads = torch.zeros_like(pvals)
+        for i in range(len(pvals)):
+            # perturb +/- eps
+            p_plus = pvals.clone()
+            p_minus = pvals.clone()
+            p_plus[i] += eps_numdiff
+            p_minus[i] -= eps_numdiff
+
+            loss_plus, _ = compute_loss_from_pvals(p_plus)
+            loss_minus, _ = compute_loss_from_pvals(p_minus)
+            # central difference
+            grad_i = (loss_plus - loss_minus) / (2.0 * eps_numdiff)
+            grads[i] = grad_i
+
+        # gradient descent step: p := p - lr * grad
+        # use small learning rates for translation in pixels vs angle vs scale;
+        # user-specified lr is global; the user can tune. Here we make a simple per-param scaling:
+        # scale translations in pixels more conservatively than rotation/scale or we can keep uniform.
+        # I'll apply a small nominal scaling factor to make default lr reasonable:
+        per_param_scale = torch.tensor([1.0, 1.0, 0.5, 0.5, 0.5], device=device)  # tuneable heuristic
+        pvals = pvals - (lr * per_param_scale * grads)
+
+        # optional: clamp scales to reasonable positive range to avoid flips
+        pvals[2] = torch.clamp(pvals[2], 0.1, 5.0)  # scale_row
+        pvals[3] = torch.clamp(pvals[3], 0.1, 5.0)  # scale_col
+
+        if verbose and (it % max(1, n_iters // 10) == 0 or it == n_iters - 1):
+            print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
+
+    # final warp with optimized params
+    final_loss, final_warped = compute_loss_from_pvals(pvals)
+    # unpack final params
+    trans_row_f = float(pvals[0].item())
+    trans_col_f = float(pvals[1].item())
+    scale_row_f = float(pvals[2].item())
+    scale_col_f = float(pvals[3].item())
+    rot_angle_f = float(pvals[4].item())
+
+    # return final parameters and warped image (same shape as input)
+    return trans_row_f, trans_col_f, scale_row_f, scale_col_f, rot_angle_f, final_warped
+    
+def test_register_affine():
+    in_img = np.random.rand(100, 100)
+    target_img = in_img[:80, 80]
+    target_img = mcemtools.masking.crop_or_pad(target_img, (100, 100))
+    tr, tc, sr, sc, ra, warped = mcemtools.analysis.register_affine(in_img, target_img,
+                                                    n_iters=1200,
+                                                    lr=0.5,
+                                                    eps_numdiff=1e-2,
+                                                    verbose=True,
+                                                    device=torch.device('cpu'))
+    
+    print("Estimated params:", tr, tc, sr, sc, ra)
+    
+    from lognflow.plt_utils import plt_imshow_subplots, plt
+    plt_imshow_subplots([in_img, target_img, warped], titles = ['in_img', 'target_img', 'warped'])
+    plt.show()
