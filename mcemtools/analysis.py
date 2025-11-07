@@ -1049,7 +1049,7 @@ def stem_4d_nyquist_interpolation_fourier(
     return data4d_upsampled
 
 def force_stem_4d(a4d, b4d):
-    """ force stem
+    """ force stem from b to a
         force the stem image of the dataset a to be the stem image of the dataset b.
     """
     
@@ -1145,6 +1145,48 @@ def find_cdf_divisions(cdf, x_vals, M):
         Target CDF values (quantiles) at which thresholds are determined.
     thresholds : np.ndarray
         Corresponding x-values that divide the data into M equal-probability bins.
+        
+    Example
+    -------
+    # Generate data: two normal distributions (each 10,000 samples)
+    np.random.seed(0)
+    data1 = np.random.normal(0, 0.5, 10_000)
+    data2 = np.random.normal(2, 0.5, 10_000)
+    data = np.concatenate([data1, data2])
+
+    # Sort data for CDF computation
+    x_vals = np.sort(data)
+    cdf = np.arange(1, len(x_vals) + 1) / len(x_vals)
+
+    # Find divisions using CDF-based method
+    M = 16  # number of desired bins
+    targets, thresholds = find_cdf_divisions(cdf, x_vals, M)
+
+    # ==== Plot CDF with target lines ====
+    plt.figure(figsize=(8, 4))
+    plt.plot(x_vals, cdf, label="CDF", color='C0')
+    for t, thr in zip(targets, thresholds):
+        plt.axhline(t, color='gray', linestyle='--', linewidth=0.8)
+        plt.axvline(thr, color='red', linestyle='--', linewidth=1)
+    plt.title("CDF and Equal-Probability Divisions")
+    plt.xlabel("x")
+    plt.ylabel("CDF")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # ==== Plot histogram and overlay thresholds ====
+    plt.figure(figsize=(8, 4))
+    plt.hist(data, bins=100, density=True, color='lightblue', edgecolor='k')
+    for thr in thresholds:
+        plt.axvline(thr, color='red', linestyle='--', linewidth=1)
+    plt.title("Histogram with Equal-Probability Bin Thresholds")
+    plt.xlabel("x")
+    plt.ylabel("Density")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.show()
     """
     # Define target CDF values (avoid exactly 0 and 1 to stay within interpolation range)
     targets = np.linspace(1 / M, 1 - 1 / M, M - 1)
@@ -1154,6 +1196,7 @@ def find_cdf_divisions(cdf, x_vals, M):
     
     return targets, thresholds
 
+""" Test for the cdf divisions
 def test_find_cdf_divisions():
     # ==== Example: bimodal distribution ====
 
@@ -1196,21 +1239,61 @@ def test_find_cdf_divisions():
     plt.tight_layout()
 
     plt.show()
+"""
 
 def get_cc(vec_a: torch.Tensor, vec_b: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """
     Cross-correlation between two 1D vectors (zero-mean, unit-std).
     Matches user's definition but stabilized a bit to avoid div-by-zero.
     """
-    va = vec_a.view(-1).float()
-    vb = vec_b.view(-1).float()
-    a_std = va.std(unbiased=False)
-    b_std = vb.std(unbiased=False)
-    if a_std.item() == 0 or b_std.item() == 0:
-        return torch.tensor(0.0, device=va.device)
+    try: va = vec_a.view(-1).float()
+    except: va = vec_a.ravel()
+    try: vb = vec_b.view(-1).float()
+    except: vb = vec_b.ravel()
+    try:
+        a_std = va.std(unbiased=False)
+        b_std = vb.std(unbiased=False)
+        if a_std.item() == 0 or b_std.item() == 0:
+            return torch.tensor(0.0, device=va.device)
+    except:
+        a_std = va.std()
+        b_std = vb.std()
+        if a_std == 0 or b_std == 0:
+            return 0
     vec_1 = (va - va.mean()) / (a_std + eps)
     vec_2 = (vb - vb.mean()) / (b_std + eps)
     return (vec_1 * vec_2).mean()
+
+def affine_transform_scipy(img, shift = (0, 0), angle_deg = 0, scale = (1, 1), final_shape = None, order=1, prefilter=True):
+    """
+    Apply shift, rotation (degrees), and scaling (2-tuple) in a single affine transform.
+    """
+    if final_shape is None:
+        final_shape = img.shape
+    angle = np.deg2rad(angle_deg)
+
+    S = np.diag(scale)
+    R = np.array([[np.cos(angle), -np.sin(angle)],
+                  [np.sin(angle),  np.cos(angle)]])
+    M = R @ S 
+
+    M_inv = np.linalg.inv(M)
+
+    # Centering: we want to keep final_shape centered after transform
+    in_center = 0.5 * np.array(img.shape[::-1])  # (x, y)
+    out_center = 0.5 * np.array(final_shape[::-1])
+    offset = in_center - M_inv @ out_center - shift[::-1]  # reverse because of (row,col)
+    from scipy.ndimage import affine_transform
+
+    transformed = affine_transform(
+        img,
+        M_inv,
+        offset=offset,
+        output_shape=final_shape,
+        order=order,
+        prefilter=prefilter
+    )
+    return transformed
 
 def build_affine_theta(trans_row: float, trans_col: float,
                        scale_row: float, scale_col: float,
@@ -1296,7 +1379,13 @@ def register_affine(in_image: torch.Tensor,
                     n_iters: int = 200,
                     lr: float = 1e-1,
                     eps_numdiff: float = 1e-3,
+                    trans_row = 0.0,
+                    trans_col = 0.0,
+                    scale_row = 1.0,
+                    scale_col = 1.0,
+                    rot_angle = 0.0,
                     verbose: bool = False,
+                    loss_func = get_cc,
                     device: torch.device = None) -> Tuple[float, float, float, float, float, torch.Tensor]:
     """
     Perform affine registration to maximize cross-correlation (get_cc).
@@ -1309,6 +1398,11 @@ def register_affine(in_image: torch.Tensor,
     # dispatch device
     if device is None:
         device = in_image.device if isinstance(in_image, torch.Tensor) else torch.device('cpu')
+
+    try:
+        if len(lr) == 5:
+            lr=torch.tensor(lr).cuda()
+    except: assert lr == float(lr), 'lr can be a float number or a list of five float numbers'
 
     # prepare tensors on device and float
     inp = in_image.to(device=device, dtype=torch.float32)
@@ -1344,13 +1438,6 @@ def register_affine(in_image: torch.Tensor,
     if (H_in != H_t) or (W_in != W_t):
         raise ValueError("in_image and target_image must have same H,W")
 
-    # initialize parameters (start with identity)
-    trans_row = 0.0
-    trans_col = 0.0
-    scale_row = 1.0
-    scale_col = 1.0
-    rot_angle = 0.0  # radians
-
     params = ['trans_row', 'trans_col', 'scale_row', 'scale_col', 'rot_angle']
     # list-style for convenience
     pvals = torch.tensor([trans_row, trans_col, scale_row, scale_col, rot_angle], device=device, dtype=torch.float32)
@@ -1364,9 +1451,9 @@ def register_affine(in_image: torch.Tensor,
         ra = float(pvec[4].item())
         warped = warp_image_with_params(inp, tr, tc, sr, sc, ra)
         # flatten to vectors
-        wa = flatten_for_cc(warped)
-        tb = flatten_for_cc(tgt)
-        cc = get_cc(wa, tb)
+        
+        cc = loss_func(warped, tgt)
+
         # we want to maximize CC, so loss = -cc
         return -cc, warped
 

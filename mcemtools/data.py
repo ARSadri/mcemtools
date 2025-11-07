@@ -1,9 +1,8 @@
 import re
 import os
 import numpy as np
-from .masking import image_by_windows
 import mcemtools
-from lognflow import printprogress
+import lognflow
 import scipy
 from itertools import product
 
@@ -36,6 +35,17 @@ def open_muSTEM_binary(filename):
         d_type = '>f8'
     #Read data and reshape as required.
     return np.reshape(np.fromfile(filename, dtype = d_type),(y,x))
+
+def show_detector_response(det_response, **kwargs_plt_imshow):
+    n_ch, n_r, n_c = det_response.shape
+    fig, ax = lognflow.plt_utils.plt_imshow(det_response.sum(0), **kwargs_plt_imshow)
+    det_com = mcemtools.analysis.CoM_detector(det_response) + np.array([n_r//2, n_c//2])
+    lognflow.printv(det_com)
+    lognflow.printv(det_response)
+    for cnt, img in enumerate(det_response):
+        ax.plot(det_com[cnt, 1] - 2, det_com[cnt, 0], '.r')
+        ax.text(det_com[cnt, 1] - 1, det_com[cnt, 0], cnt)
+    return fig, ax
 
 def check_raw_filename(fpath, scan_shape = None):
     import re
@@ -135,7 +145,7 @@ class data_maker_2D:
         inimg = inimg.astype('float32')
         self.n_r, self.n_c = inimg.shape
         
-        self.imbywin = image_by_windows(
+        self.imbywin = mcemtools.masking.image_by_windows(
             inimg.shape, win_shape, skip, method = 'fixed')
         self.Y_label = self.imbywin.image2views(inimg).copy()
         self.Y_label = np.array([self.Y_label]).swapaxes(0, 1)
@@ -187,7 +197,7 @@ class data_maker_4D:
         self.n_x, self.n_y, self.n_r, self.n_c = inimg.shape
         self.dtype = inimg.dtype
 
-        self.imbywin = mcemtools.image_by_windows(
+        self.imbywin = mcemtools.masking.image_by_windows(
             (n_x, n_y), (len_side, len_side), method = 'fixed')
         
         self.mask_range = np.ones((len_side, len_side), dtype = 'int')
@@ -420,7 +430,7 @@ class segmented_to_4D:
                 
                 force_print = False
 
-                pbar = printprogress(self.n_ch, print_function=None)
+                pbar = lognflow.printprogress(self.n_ch, print_function=None)
                 for segcnt in range(self.n_ch):
                     mask = self.detector_response[segcnt]
                     
@@ -431,7 +441,7 @@ class segmented_to_4D:
                     
                     ETA = pbar()
                     if (ETA > 120) & (pbar.in_print_function is None):
-                        pbar = printprogress(self.n_ch - 1)
+                        pbar = lognflow.printprogress(self.n_ch - 1)
                 
                 return cbed_slices
             
@@ -604,7 +614,7 @@ def apply_detector_response_old(d4d, detector_response, verbose = False,
     else:
         modified_d4d = d4d.copy()
 
-    if verbose: pbar = printprogress(d4d.shape[0] * d4d.shape[1])
+    if verbose: pbar = lognflow.printprogress(d4d.shape[0] * d4d.shape[1])
     for i, j in np.ndindex(d4d.shape[:2]):
         segments_sum = d4d[None, i, j] * detector_response
         if return_by_channle:
@@ -665,7 +675,7 @@ def apply_detector_response(d4d, detector_response, detector_response_input = No
     else:
         modified_d4d = np.zeros(d4d.shape[:2] + detector_response.shape[1:], dtype = d4d.dtype)
 
-    if verbose: pbar = printprogress(d4d.shape[0] * d4d.shape[1])
+    if verbose: pbar = lognflow.printprogress(d4d.shape[0] * d4d.shape[1])
     for i, j in np.ndindex(d4d.shape[:2]):
         segments_sum = d4d[None, i, j] * detector_response_input
         if return_by_channle:
@@ -772,204 +782,274 @@ def generate_indices(labels_shape, batch_size, method = 'class_based'):
         
     return samples
 
+# def segmented_detector_maker(image_length: int,
+#                              rings_radii_ranges: list,
+#                              rings_num_segments: list,
+#                              ring_gap_angles: list = None,
+#                              centre: tuple = None,
+#                              angle_deg: float = 0):
+#     angle = np.deg2rad(angle_deg)
+#
+#     n_rings = len(rings_radii_ranges)
+#     assert len(rings_num_segments) == n_rings, \
+#         "rings_num_segments must have the same length as rings_radii_ranges"
+#
+#     if ring_gap_angles is None:
+#         ring_gap_angles = [0.0] * n_rings
+#     else:
+#         assert len(ring_gap_angles) == n_rings, \
+#             "ring_gap_angles must have the same length as rings_radii_ranges"
+#
+#     total_segments = sum(rings_num_segments)
+#     masks = np.zeros((total_segments, image_length, image_length), dtype=float)
+#
+#     if centre is None:
+#         centre = (image_length / 2, image_length / 2)
+#
+#     seg_idx = 0
+#
+#     for ring_idx in range(n_rings):
+#         n_seg = rings_num_segments[ring_idx]
+#         in_r, out_r = rings_radii_ranges[ring_idx]
+#         total_gap = np.deg2rad(ring_gap_angles[ring_idx])
+#
+#         total_coverage = 2 * np.pi - total_gap
+#         seg_width = total_coverage / n_seg
+#         gap_width = total_gap / n_seg
+#
+#         for s in range(n_seg):
+#             start_angle = angle + s * (seg_width + gap_width)
+#             finish_angle = start_angle + seg_width
+#
+#             masks[seg_idx] = mcemtools.annular_mask(
+#                 (image_length, image_length),
+#                 centre=centre,
+#                 outer_radius=out_r,
+#                 inner_radius=in_r,
+#                 start_angle=start_angle,
+#                 finish_angle=finish_angle,
+#             )
+#             seg_idx += 1
+#
+#     overlap_mask = masks.sum(0)
+#     valid = overlap_mask > 0
+#     masks[:, valid] /= overlap_mask[None, valid]
+#
+#     return masks
+#
+# def panther_maker(length, outer_circle = True, 
+#                   centre=None, RING_0_to_1_RATIO=0.53125, angle_deg = 0):
+#     if outer_circle:
+#         outer_radius = length // 2
+#     bf_radius = int((length//2) * RING_0_to_1_RATIO)
+#     det_resp = mcemtools.data.segmented_detector_maker(
+#         length, [[0, bf_radius//2], [bf_radius//2, bf_radius], [bf_radius, outer_radius]], 
+#         [4, 4, 4], centre = centre, angle_deg = angle_deg)
+#
+#     det_resp_new = det_resp.copy()
+#     det_resp_new = 0 * det_resp.copy() - 1
+#     current_ch = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+#     new_ch     = [0, 9, 6, 3, 1, 10, 7, 4, 2, 11, 8, 5]
+#     for ch, new_ch in zip(current_ch, new_ch):
+#         det_resp_new[new_ch] = det_resp[ch].copy()
+#
+#     if (det_resp_new.astype('int') == det_resp_new).all():
+#         det_resp_new = det_resp_new.astype('int')
+#
+#     return det_resp_new
 
-def segmented_detector_maker(image_length: int,
-                             rings_radii_ranges: list,
-                             rings_num_segments: list,
-                             centre: tuple = None):
+import numpy as np
+import mcemtools
+
+
+def segmented_detector_maker(
+    image_length: int,
+    rings_radii_ranges: list,
+    rings_num_segments: list,
+    ring_gap_angles: list = None,
+    centre: tuple = None,
+    angle_deg: float = 0.0,
+):
     """
-    Create a segmented annular detector mask (generalized multi-ring design).
+    Create a segmented annular detector mask with multiple rings and angular segments.
 
-    The detector is divided radially and angularly:
-      - The radial boundaries are defined by `radii`.
-      - Each ring (region between successive radii) is split into a given
-        number of angular segments.
-
-    This generalizes detectors such as PANTHER by allowing arbitrary
-    radii and segment counts per ring.
+    Each ring is divided into a specified number of segments, optionally leaving
+    a total angular gap (distributed evenly between segments). The function returns
+    a stack of 2D masks (shape: [total_segments, image_length, image_length]),
+    where each slice represents one detector segment.
 
     Parameters
     ----------
-    length : int
-        Linear size (in pixels) of the square diffraction pattern or detector.
-    radii : list of float
-        Sorted list of outer radii (in pixels) for each ring.
-        Example: [32, 64, 96] defines four rings with boundaries
-        [0–32], [32–64], [64–96], [96–∞].
-    num_segments : list of int
-        List of the same length as `radii`, specifying how many
-        angular segments each ring should be divided into.
-        Example: [4, 8, 12, 16].
+    image_length : int
+        Size of the (square) detector image in pixels.
+    rings_radii_ranges : list of [float, float]
+        List of inner and outer radius pairs for each ring, e.g. [[10, 20], [20, 30]].
+    rings_num_segments : list of int
+        Number of angular segments in each ring.
+    ring_gap_angles : list of float, optional
+        Total angular gap (in degrees) to be distributed evenly among segments per ring.
+        Defaults to zero for all rings.
     centre : tuple of float, optional
-        (row, column) coordinates of the detector center.
-        If None, defaults to the image midpoint.
+        (x, y) coordinates for the detector center. Defaults to the image center.
+    angle_deg : float, optional
+        Rotation angle (in degrees) to rotate the whole detector.
 
     Returns
     -------
-    detector_masks : np.ndarray
-        Array of shape (total_segments, length, length) containing binary masks.
-        Each plane corresponds to one segment of the detector.
-        Masks are 1 where the segment covers and 0 elsewhere.
+    np.ndarray
+        Array of shape (total_segments, image_length, image_length), where each
+        2D slice is a normalized mask for one detector segment.
 
-    Example
-    -------
-    >>> det = segmented_detector_maker(
-    ...     length=128,
-    ...     radii=[32, 64, 96],
-    ...     num_segments=[4, 8, 12, 16]
+    Examples
+    --------
+    >>> masks = segmented_detector_maker(
+    ...     image_length=128,
+    ...     rings_radii_ranges=[[20, 40], [40, 60]],
+    ...     rings_num_segments=[8, 12],
+    ...     ring_gap_angles=[10, 20],
+    ...     angle_deg=15,
     ... )
-    >>> det.shape
-    (4 + 8 + 12 + 16, 128, 128)
-    >>> np.sum(det, axis=0).max()
-    1.0  # Each pixel belongs to exactly one segment
+    >>> masks.shape
+    (20, 128, 128)
+
+    >>> # Visualize one segment
+    >>> import matplotlib.pyplot as plt
+    >>> plt.imshow(masks[0])
+    >>> plt.title("Segment 0")
+    >>> plt.show()
     """
-    # --- Setup
-    
-    try:
-        if rings_num_segments == int(rings_num_segments):
-            rings_num_segments = np.array([rings_num_segments]*len(rings_radii_ranges))
-    except: pass
-    
-    if len(rings_radii_ranges) == len(rings_num_segments) - 1:
-        rings_radii_ranges.append([rings_radii_ranges[-1][1], np.inf])
-
-
+    angle_rad = np.deg2rad(angle_deg)
     n_rings = len(rings_radii_ranges)
+
+    # Validate input
+    assert len(rings_num_segments) == n_rings, \
+        "rings_num_segments must have the same length as rings_radii_ranges"
+    if ring_gap_angles is None:
+        ring_gap_angles = [0.0] * n_rings
+    else:
+        assert len(ring_gap_angles) == n_rings, \
+            "ring_gap_angles must have the same length as rings_radii_ranges"
+
+    # Allocate masks
     total_segments = sum(rings_num_segments)
-    masks = np.zeros((total_segments, image_length, image_length))
+    masks = np.zeros((total_segments, image_length, image_length), dtype=float)
+
+    # Default center to image midpoint
+    if centre is None:
+        centre = (image_length / 2, image_length / 2)
 
     seg_idx = 0
     for ring_idx in range(n_rings):
-        n_seg = rings_num_segments[ring_idx]
-        in_r = rings_radii_ranges[ring_idx][0]
-        out_r = rings_radii_ranges[ring_idx][1]
-        # Angular division for this ring
-        for s in range(n_seg):
-            start_angle = 2 * np.pi * s / n_seg
-            finish_angle = 2 * np.pi * (s + 1) / n_seg
+        n_segments = rings_num_segments[ring_idx]
+        inner_r, outer_r = rings_radii_ranges[ring_idx]
+        total_gap_rad = np.deg2rad(ring_gap_angles[ring_idx])
+
+        # Compute angular spacing
+        total_coverage = 2 * np.pi - total_gap_rad
+        segment_width = total_coverage / n_segments
+        gap_width = total_gap_rad / n_segments
+
+        for s in range(n_segments):
+            start_angle = angle_rad + s * (segment_width + gap_width)
+            end_angle = start_angle + segment_width
 
             masks[seg_idx] = mcemtools.annular_mask(
                 (image_length, image_length),
                 centre=centre,
-                outer_radius=out_r,
-                inner_radius=in_r,
+                outer_radius=outer_r,
+                inner_radius=inner_r,
                 start_angle=start_angle,
-                finish_angle=finish_angle,
+                finish_angle=end_angle,
             )
             seg_idx += 1
-    masks[:, masks.sum(0) > 0] = masks[:, masks.sum(0) > 0] / masks.sum(0)[None, masks.sum(0) > 0]
+
+    # Normalize overlapping regions so masks sum to 1 where valid
+    overlap = masks.sum(axis=0)
+    valid = overlap > 0
+    masks[:, valid] /= overlap[None, valid]
+
     return masks
 
-# def test_segmented_detector_maker():
-#     det = segmented_detector_maker(128, [[0, 16], [16, 32]], [4, 4, 4])
-#     printv(det)
-#     det_labels = (det * np.arange(len(det))[:, None, None]).sum(0)
-#     _ = plt_imshow_subplots(np.concatenate([det, det_labels[None]], axis=0))
 
-def panther_maker(length, bf_radius, centre=None, RING_0_to_1_RATIO=0.53125):
+    masks[:, valid] /= overlap[None, valid]
+
+    return masks
+
+
+def panther_maker(
+    length: int,
+    circle_edge: bool = True,
+    centre: tuple = None,
+    bf_radius = None,
+    RING_0_to_1_RATIO: float = 0.53125,
+    angle_deg: float = 0.0,
+):
     """
-    Construct a PANTHER-style segmented detector mask for 4D-STEM analysis.
+    Generate a standard "Panther" detector pattern composed of 3 concentric rings,
+    each divided into 4 angular segments (total 12 segments).
 
-    The PANTHER detector concept divides the bright-field (BF) disk into 
-    three concentric annular rings, each further subdivided into four 
-    quadrants (12 total segments). This function generates corresponding
-    binary masks for each segment in reciprocal-space coordinates.
-
-    The generated masks can be used to simulate or analyze detector
-    responses by integrating the diffraction pattern intensity within 
-    each segment.
+    The rings follow a fixed ratio between the inner and outer radius, and
+    the channel order is rearranged to match a specific detector configuration.
 
     Parameters
     ----------
     length : int
-        Linear size (in pixels) of the square diffraction pattern or detector.
-    bf_radius : float
-        Radius (in pixels) of the bright-field (BF) disk.
+        Size of the (square) detector image in pixels.
+    circle_edge : bool, optional
+        If True, use the full image as the outer radius. Default is True.
     centre : tuple of float, optional
-        (row, column) coordinates of the disk center. If None, the center
-        is assumed to be at the image midpoint.
+        (x, y) coordinates for the detector center. Defaults to image center.
     RING_0_to_1_RATIO : float, optional
-        Fractional radius defining the inner ring boundary relative to the
-        bright-field radius (default = 0.53125).
+        Ratio between the first bright-field ring radius and the outer radius.
+    angle_deg : float, optional
+        Global rotation angle in degrees.
 
     Returns
     -------
-    det_resp_new : np.ndarray
-        Array of shape (12, length, length) containing the PANTHER detector masks.
-        Each plane `det_resp_new[i]` corresponds to one detector segment.
-        Masks are normalized such that the sum across all 12 segments equals 1.
+    np.ndarray
+        Array of shape (12, length, length), with rearranged detector segment masks.
 
-    Notes
-    -----
-    - The detector is built from three concentric rings:
-        1. Inner disk to `RING_0_to_1_RATIO * bf_radius`
-        2. `RING_0_to_1_RATIO * bf_radius` to `bf_radius`
-        3. `bf_radius` to the outer edge of the array
-      Each ring is split into 4 quadrants (π/2 angular width).
-    
-    - The initial (0–11) channel ordering is rearranged to match the 
-      PANTHER geometric channel layout.
+    Examples
+    --------
+    >>> det = panther_maker(128)
+    >>> det.shape
+    (12, 128, 128)
 
-    - The function depends on `mcemtools.annular_mask`, which should return 
-      a binary mask for a given annular sector.
-
-    Example
-    -------
-    >>> panther = panther_maker(length=256, bf_radius=80)
-    >>> panther.shape
-    (12, 256, 256)
-    >>> np.sum(panther, axis=0).max()
-    1.0  # Each pixel belongs to exactly one detector segment
+    >>> # Visualize ring layout
+    >>> import matplotlib.pyplot as plt
+    >>> plt.imshow(det.sum(axis=0))
+    >>> plt.title("Panther Detector Layout")
+    >>> plt.show()
     """
-    mask_ring = np.zeros((3, 4, length, length))
-    for cnt in range(4):
-        mask_ring[0, cnt] = mcemtools.annular_mask(
-            (length, length),
-            centre=centre,
-            radius=RING_0_to_1_RATIO * bf_radius,
-            start_angle=cnt * np.pi/2,
-            finish_angle=(cnt + 1) * np.pi/2,
-        )
-        mask_ring[1, cnt] = mcemtools.annular_mask(
-            (length, length),
-            centre=centre,
-            in_radius=RING_0_to_1_RATIO * bf_radius,
-            radius=bf_radius,
-            start_angle=cnt * np.pi/2,
-            finish_angle=(cnt + 1) * np.pi/2,
-        )
-        mask_ring[2, cnt] = mcemtools.annular_mask(
-            (length, length),
-            centre=centre,
-            in_radius=bf_radius,
-            start_angle=cnt * np.pi/2,
-            finish_angle=(cnt + 1) * np.pi/2,
-        )
+    # Determine ring radii
+    if bf_radius is None:
+        brightfield_radius = int((length // 2) * RING_0_to_1_RATIO)
+        outer_radius = length // 2 if circle_edge else int(length * 0.45)
+    else:
+        brightfield_radius = bf_radius
+        outer_radius = int(brightfield_radius / RING_0_to_1_RATIO)
 
-    det_resp = mask_ring.reshape(-1, length, length)
+    # Build the base segmented detector
+    det_resp = mcemtools.data.segmented_detector_maker(
+        length,
+        rings_radii_ranges=[
+            [0, brightfield_radius // 2],
+            [brightfield_radius // 2, brightfield_radius],
+            [brightfield_radius, outer_radius],
+        ],
+        rings_num_segments=[4, 4, 4],
+        centre=centre,
+        angle_deg=angle_deg,
+    )
 
-    det_resp_new = 0 * det_resp.copy() - 1
-    current_ch = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    new_ch = [0, 9, 6, 3, 1, 10, 7, 4, 2, 11, 8, 5]
-    for ch, new_ch in zip(current_ch, new_ch):
-        det_resp_new[new_ch] = det_resp[ch].copy()
+    # Reorder channels according to custom pattern
+    reordered = np.zeros_like(det_resp) - 1
+    current_order = list(range(12))
+    new_order = [0, 9, 6, 3, 1, 10, 7, 4, 2, 11, 8, 5]
+    for src, dst in zip(current_order, new_order):
+        reordered[dst] = det_resp[src]
 
-    det_resp_new = det_resp_new / det_resp_new.sum(0)
-    if (det_resp_new.astype('int') == det_resp_new).all():
-        det_resp_new = det_resp_new.astype('int')
-
-    return det_resp_new
-
-# def test_panther_maker():
-#     panth_response = panther_maker(length = 96, bf_radius = 26, centre = (48, 48)).astype('float32')
-#     panth_response /= panth_response.sum(0)
-#     plt_imshow(panth_response.sum(0))
-#     print(np.unique(panth_response.ravel()))
-#     plt_imshow_subplots(panth_response, frame_shape = (4, 3))
-#     plt_imshow((panth_response*np.arange(12)[:, None, None]).sum(0), figsize = (18, 18), show_values=True)
-
-#     print(f'panth_response: {np.unique(panth_response.ravel())}')
-
+    return reordered
 
 def apply_detresp_memory_efficient(exp_data, detector_response, tile_x=16, tile_y=16, verbose = True):
     """
@@ -981,7 +1061,7 @@ def apply_detresp_memory_efficient(exp_data, detector_response, tile_x=16, tile_
     n_ch = detector_response.shape[0]
     exp_data_ch = np.empty((n_x, n_y, n_ch), dtype=exp_data.dtype)
     if verbose:
-        pbar = printprogress(tile_x * tile_y, 
+        pbar = lognflow.printprogress(tile_x * tile_y, 
             title = f'memory efficient detector response for {tile_x * tile_y} tiles')
     for ix in range(0, n_x, tile_x):
         ix_end = min(ix + tile_x, n_x)
@@ -1052,3 +1132,39 @@ def unsplit_electrons(
     exp_data_filtered = exp_data * mask_expanded
 
     return exp_data_filtered
+
+def gkern(kernlen):
+    import scipy.stats
+    lim = kernlen//2 + (kernlen % 2)/2
+    x = np.linspace(-lim, lim, kernlen+1)
+    kern1d = np.diff(scipy.stats.norm.cdf(x))
+    kern2d = np.outer(kern1d, kern1d)
+    return kern2d/(kern2d.flatten().max())
+
+def diffractionPatternMaker(XSZ, YSZ, WINSIZE, n_peaks, n_outliers):    
+    inData = np.zeros((XSZ, YSZ), dtype='float32')
+    
+    inMask = np.ones(inData.shape, dtype = 'int8')
+    
+    for ccnt in range(inData.shape[1]):
+        for rcnt in range(inData.shape[0]):
+            inData[rcnt, ccnt] += 100 + np.fabs(
+                400*np.exp(-(((rcnt-XSZ)**2+(ccnt-YSZ)**2)**0.5 - 
+                    ((XSZ**2 + YSZ**2)**0.5)/3)**2/(2*(((XSZ**2 + YSZ**2)**0.5)/6)**2)))
+            inData[rcnt, ccnt] += 6*np.sqrt(inData[rcnt, ccnt])*np.random.randn(1)    
+    
+    randomLocations = np.random.rand(2,n_peaks)
+    randomLocations[0,:] = XSZ/2 + np.floor(XSZ*0.8*(randomLocations[0,:] - 0.5))
+    randomLocations[1,:] = YSZ/2 + np.floor(YSZ*0.8*(randomLocations[1,:] - 0.5))
+    
+    for cnt in np.arange(n_peaks):    
+        bellShapedCurve = 600*gkern(WINSIZE)
+        winXStart = (randomLocations[0, cnt] - (WINSIZE-1)/2).astype(np.int32)
+        winXEnd = (randomLocations[0, cnt] + (WINSIZE+1)/2).astype(np.int32)
+        winYStart = (randomLocations[1, cnt] - (WINSIZE-1)/2).astype(np.int32)
+        winYEnd = (randomLocations[1, cnt] + (WINSIZE+1)/2).astype(np.int32)
+        inData[ winXStart : winXEnd, winYStart : winYEnd ] += bellShapedCurve;
+        if (cnt >= n_peaks - n_outliers):
+            inMask[ winXStart : winXEnd, winYStart : winYEnd ] = 0;    
+    
+    return(inData, inMask, randomLocations)

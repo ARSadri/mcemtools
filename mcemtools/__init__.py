@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.9.14'
+__version__ = '0.9.15'
 
 from .mcemtools import viewer_4D, nvidia_smi_line
 

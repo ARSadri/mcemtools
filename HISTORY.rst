@@ -167,3 +167,7 @@ History
 0.9.14 (2025-10-16)
 -------------------
 * Added Transformerregressir
+
+0.9.15 (2025-11-07)
+-------------------
+* more advanced confidence head

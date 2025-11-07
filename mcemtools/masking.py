@@ -12,13 +12,13 @@ def mask2D_to_4D(mask2D, data4D_shape):
     _mask4D = np.tile(_mask4D, (n_x, n_y, 1, 1))
     return _mask4D
 
-import numpy as np
-
 def annular_mask(image_shape : tuple,
                  centre:tuple = None, outer_radius:float=None, inner_radius:float=None,
-                 start_angle:float = 0, finish_angle:float = 2*np.pi,
+                 start_angle:float = 0, finish_angle:float = 2*np.pi, zero_angle = 0,
                  radius = None, in_radius = None):
-    
+
+    if (finish_angle > 2 * np.pi): finish_angle = finish_angle % (2 * np.pi)
+
     if outer_radius is not None:
         radius = outer_radius
     if inner_radius is not None:
@@ -61,11 +61,12 @@ def annular_mask(image_shape : tuple,
     angles = (angles + 2 * np.pi) % (2 * np.pi)
 
     # Apply angle mask
+    
     if start_angle <= finish_angle:
-        angle_mask = (angles >= start_angle) * (angles <= finish_angle)
+        angle_mask = (start_angle <= angles) * (angles <= finish_angle)
     else:
         # Handles cases where the angle range crosses the 0/2*pi boundary (e.g., 3*pi/2 to pi/2)
-        angle_mask = (angles >= start_angle) + (angles <= finish_angle)
+        angle_mask = (start_angle <= angles) + (angles <= finish_angle)
 
     mask *= angle_mask
 
@@ -141,7 +142,7 @@ class image_by_windows:
                  img_shape: tuple[int, int], 
                  win_shape: tuple[int, int],
                  skip: tuple[int, int] = (1, 1),
-                 method = 'linear'):
+                 method = 'fixed'):
         """image by windows
         
             I am using OOP here because the user pretty much always wants to
@@ -208,7 +209,7 @@ class image_by_windows:
         grid_locations[:, 1] = (self.grid[:, 0].copy().max() - self.grid[:, 0].copy())
         self.grid_locations_for_subplots = grid_locations.copy()
         
-    def image2views(self, img):
+    def image2views(self, img, verbose = False):
         all_other_dims = ()
         if (len(img.shape)>2):
             all_other_dims = img.shape[2:]
@@ -218,10 +219,15 @@ class image_by_windows:
                 (self.grid.shape[0], self.win_shape[0], self.win_shape[1]
                  ) + all_other_dims,
                 dtype = img_dtype)
+            if verbose:
+                from lognflow import printprogress
+                pbar = printprogress(len(self.grid))
             for gcnt, grc in enumerate(self.grid):
                 gr, gc = grc
                 views[gcnt] = img[
                     gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]].copy()
+                if verbose: pbar()
+            if verbose: del pbar
         except:#torch or others
             views = []
             for gcnt, grc in enumerate(self.grid):
@@ -370,12 +376,9 @@ def extract_pixels_on_patch(image, patch, linewidth=1.0):
 
 class markimage:
     def __init__(self, 
-                 in_image, 
-                 mark_shape='circle',
-                 figsize=(10, 5),
-                 slider_start = 0.1,
-                 kwargs_shape=dict(ec='pink', fc='None', linewidth=1),
-                 **kwargs_for_imshow):
+            in_image, mark_shape='circle', figsize=(10, 5), slider_start = 0.1,
+            kwargs_shape=dict(ec='pink', fc='None', linewidth=1), **kwargs_for_imshow):
+        
         kwargs_shape.setdefault('ec', 'pink')
         kwargs_shape.setdefault('fc', 'None')
         kwargs_shape.setdefault('linewidth', 1)
@@ -383,18 +386,18 @@ class markimage:
         assert len(in_image.shape) == 2, 'mcemtools.markimage, input must be 2D image'
 
         self.mark_shape = mark_shape
-        self.fig, axs = plt.subplots(1, 3, figsize=figsize)
+        self.fig, self.axs = plt.subplots(1, 3, figsize=figsize)
         self.fig.subplots_adjust(bottom=0.45)
-        self.im = axs[0].imshow(in_image, **kwargs_for_imshow)
+        self.im = self.axs[0].imshow(in_image, **kwargs_for_imshow)
         cm = self.im.get_cmap()
         self.in_image = in_image
-        _, bins, patches = axs[1].hist(in_image.flatten(), bins='auto')
+        _, bins, patches = self.axs[1].hist(in_image.flatten(), bins='auto')
         bin_centres = 0.5 * (bins[:-1] + bins[1:])
         col = (bin_centres - np.min(bin_centres)) / np.ptp(bin_centres)
         for c, p in zip(col, patches):
             plt.setp(p, 'facecolor', cm(c))
-        axs[1].set_title('Histogram of pixel intensities')
-        self.ax2 = axs[2]
+        self.axs[1].set_title('Histogram of pixel intensities')
+        self.ax2 = self.axs[2]
         slider_ax = self.fig.add_axes([slider_start, 0.3, 0.4, 0.03])
         self.slider_thresh = RangeSlider(
             slider_ax, "", in_image.min(), in_image.max(), 
@@ -405,8 +408,8 @@ class markimage:
         self.tb_min = TextBox(tb_min_ax, 'min', initial=f'{in_image.min():.5f}')
         self.tb_max = TextBox(tb_max_ax, 'max', initial=f'{in_image.max():.5f}')
 
-        self.lower_limit_line = axs[1].axvline(self.slider_thresh.val[0], color='k')
-        self.upper_limit_line = axs[1].axvline(self.slider_thresh.val[1], color='k')
+        self.lower_limit_line = self.axs[1].axvline(self.slider_thresh.val[0], color='k')
+        self.upper_limit_line = self.axs[1].axvline(self.slider_thresh.val[1], color='k')
 
         self.slider_thresh.on_changed(self.update)
         self.tb_min.on_submit(self.on_min_thresh)
@@ -419,21 +422,21 @@ class markimage:
             circle_radius = min(cx, cy)
 
             self.markshape = plt.Circle((cy, cx), circle_radius, **kwargs_shape)
-            axs[0].add_patch(self.markshape)
+            self.axs[0].add_patch(self.markshape)
 
             sl1 = self.fig.add_axes([slider_start, 0.2, 0.5, 0.03])
             sl2 = self.fig.add_axes([slider_start, 0.15, 0.5, 0.03])
             sl3 = self.fig.add_axes([slider_start, 0.1, 0.5, 0.03])
 
-            self.slider_r = Slider(sl1, "", 0.0, cx, valinit=circle_radius)
+            self.slider_r  = Slider(sl1, "", 0.0, cx, valinit=circle_radius)
             self.slider_cx = Slider(sl2, "", 0.0, in_image.shape[0], valinit=cx)
             self.slider_cy = Slider(sl3, "", 0.0, in_image.shape[1], valinit=cy)
 
-            tb_r_ax = self.fig.add_axes([0.87, 0.2, 0.12, 0.03])
+            tb_r_ax  = self.fig.add_axes([0.87, 0.2, 0.12, 0.03])
             tb_cx_ax = self.fig.add_axes([0.87, 0.15, 0.12, 0.03])
             tb_cy_ax = self.fig.add_axes([0.87, 0.1, 0.12, 0.03])
 
-            self.tb_r = TextBox(tb_r_ax, 'radius', initial=str(circle_radius))
+            self.tb_r  = TextBox(tb_r_ax, 'radius', initial=str(circle_radius))
             self.tb_cx = TextBox(tb_cx_ax, 'centre_x', initial=str(cx))
             self.tb_cy = TextBox(tb_cy_ax, 'centre_y', initial=str(cy))
 
@@ -454,12 +457,12 @@ class markimage:
 
             self.markshape = plt.Rectangle(
                 (tl_c, tl_r), br_c - tl_c, br_r - tl_r, **kwargs_shape)
-            axs[0].add_patch(self.markshape)
+            self.axs[0].add_patch(self.markshape)
 
             sliders = {
-                'top_left_r': [slider_start, 0.2, tl_r, h],
-                'top_left_c': [slider_start, 0.15, tl_c, w],
-                'bot_right_r': [slider_start, 0.1, br_r, h],
+                'top_left_r' : [slider_start, 0.2 , tl_r, h],
+                'top_left_c' : [slider_start, 0.15, tl_c, w],
+                'bot_right_r': [slider_start, 0.1 , br_r, h],
                 'bot_right_c': [slider_start, 0.05, br_c, w],
             }
 
@@ -536,8 +539,6 @@ class markimage:
             textbox.set_val(str(slider.val))
         self.update2(val)
 
-    import numpy as np
-
     def circle_indices(self, shape, radius, center = None, tol=0.5):
         """
         Return the indices (i,j) of pixels lying on a circle of given radius
@@ -570,8 +571,20 @@ class markimage:
         mask = np.abs(dist - radius) <= tol
         indi, indj = np.nonzero(mask)
 
+        angs = np.arctan2(indi - ic, jc - indj)
+        sortinds = np.argsort(angs)
+        indi = indi[sortinds]
+        indj = indj[sortinds]
+
         return indi, indj
 
+    def test_circle_indices(self):
+        indsi, indsj = self.circle_indices(shape = (128, 128), radius = 48, center = (64, 64), tol=10)
+        img = np.zeros((128, 128))
+        img[indsi, indsj] = np.arange(len(indsi))
+        indsi, indsj = self.circle_indices(shape = (128, 128), radius = 48, center = (64, 64), tol=0.5)
+        img[indsi, indsj] += np.arange(len(indsi))*10
+        self.axs[0].imshow(img)
 
     def update2(self, val = None):
         if self.mark_shape == 'circle':
