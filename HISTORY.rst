@@ -175,3 +175,7 @@ History
 0.9.16 (2026-01-27)
 -------------------
 * recycling and reconstruction error added to the regressor 
+
+0.10.0 (2026-01-27)
+-------------------
+* reconstruction error of the regressor is weighted.

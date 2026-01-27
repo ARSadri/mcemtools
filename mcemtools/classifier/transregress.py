@@ -152,9 +152,10 @@ class TransformerRegressor_with_recycling(nn.Module):
         return pred, confid, reconst
 
 class TransformerLoss_with_recycling(nn.Module):
-    def __init__(self, data_gen, classifier_weight = 100, TF_imbalance = 5):
-        super(TransformerLoss, self).__init__()
+    def __init__(self, data_gen, classifier_weight = 0.75):
+        super(TransformerLoss_with_recycling, self).__init__()
         self.data_gen = data_gen
+        self.classifier_weight = classifier_weight
     
     def forward(self, preds, labels, inds):
 
@@ -170,7 +171,7 @@ class TransformerLoss_with_recycling(nn.Module):
         #the data looks like n_samples, n_pixels, n_features
         #we know that we would like to reconstruct data[:, :, :40].sum(-1)
         # as such the loss should look like 
-        reconst_loss = (((reconst - data[:, :, :40].sum(-1))**2).mean(1)**0.5).mean()
-        margin_loss = margin_loss + reconst_loss
+        reconst_loss = (((reconst - data[:, :, :40].mean(-1))**2).mean(1)**0.5).mean()
+        total_loss = margin_loss * self.classifier_weight + reconst_loss * (1 - self.classifier_weight)
 
-        return (margin_loss, confid_loss)
+        return (total_loss, confid_loss)
