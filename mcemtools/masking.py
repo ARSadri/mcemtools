@@ -210,6 +210,9 @@ class image_by_windows:
         self.grid_locations_for_subplots = grid_locations.copy()
         
     def image2views(self, img, verbose = False):
+        if verbose: 
+            from lognflow import printprogress
+            pbar = printprogress(len(self.grid))
         all_other_dims = ()
         if (len(img.shape)>2):
             all_other_dims = img.shape[2:]
@@ -219,21 +222,21 @@ class image_by_windows:
                 (self.grid.shape[0], self.win_shape[0], self.win_shape[1]
                  ) + all_other_dims,
                 dtype = img_dtype)
-            if verbose:
-                from lognflow import printprogress
-                pbar = printprogress(len(self.grid))
             for gcnt, grc in enumerate(self.grid):
                 gr, gc = grc
                 views[gcnt] = img[
                     gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]].copy()
                 if verbose: pbar()
-            if verbose: del pbar
+
         except:#torch or others
             views = []
             for gcnt, grc in enumerate(self.grid):
                 gr, gc = grc
                 views.append(
                     img[gr:gr + self.win_shape[0], gc:gc + self.win_shape[1]])
+                if verbose: pbar()
+
+        if verbose: del pbar
         return views
     
     def views2image(self, views, include_inds = None, method = 'linear',
@@ -642,5 +645,198 @@ def remove_islands_by_size(
    
     return (segments_map)
 
+
+def label_components_by_value(img):
+    """
+    Label connected components for each pixel value and return component sizes
+    and the corresponding pixel value of each component.
+
+    Returns
+    -------
+    labels : ndarray
+        Final label image, labels = 1..num_components.
+    sizes : ndarray
+        Array of sizes, where sizes[i-1] is the size of component with label i.
+    values : ndarray
+        Array of original pixel values, where values[i-1] is the pixel value of component i.
+    """
+    from scipy.ndimage import label
+
+    labels = np.zeros_like(img, dtype=int)
+    current_label = 1
+
+    size_list = []
+    value_list = []
+
+    for val in np.unique(img):
+        mask = (img == val)
+        lbl, n = label(mask)
+
+        for local_id in range(1, n + 1):
+            comp_size = np.sum(lbl == local_id)
+            size_list.append(comp_size)
+            value_list.append(val)
+
+        # apply global offset
+        lbl[lbl > 0] += (current_label - 1)
+        labels[mask] = lbl[mask]
+
+        current_label += n
+
+    return labels, np.array(size_list), np.array(value_list)
+
+def merge_small_components(labels, sizes, threshold):
+    """
+    Merge components smaller than `threshold` into the largest neighboring 
+    component, where a neighbor is valid only if at least 3 pixels from the 
+    small component touch it.
+
+    NOTE: The neighbor does NOT need to be large. Any size neighbor is acceptable.
+    """
+    
+    merged = labels.copy()
+    h, w = merged.shape
+
+    # 8-connectivity
+    neigh = [(-1,0),(1,0),(0,-1),(0,1),
+             (-1,-1),(-1,1),(1,-1),(1,1)]
+
+    N = sizes.size
+
+    # identify the "small" components
+    is_small = np.zeros(N+1, dtype=bool)
+    is_small[1:] = sizes < threshold
+
+    # process small ones first (optional ordering)
+    for label_id in np.argsort(sizes):
+        comp = label_id + 1
+        if not is_small[comp]:
+            continue   # only merge small components
+
+        # find pixels in this component
+        ys, xs = np.where(merged == comp)
+
+        # count touching pixels per neighbor
+        touch_count = {}
+
+        for y, x in zip(ys, xs):
+            for dy, dx in neigh:
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < h and 0 <= nx < w:
+                    nl = merged[ny, nx]
+                    if nl != comp and nl > 0:
+                        touch_count[nl] = touch_count.get(nl, 0) + 1
+
+        if not touch_count:
+            continue  # isolated or no neighbors
+
+        # only keep neighbors with ≥ 3 touches
+        valid_neighbors = [
+            nid for nid, count in touch_count.items()
+            if count >= 3
+        ]
+
+        if not valid_neighbors:
+            continue  # nothing satisfies ≥3 constraint
+
+        # pick the largest neighbor (by size)
+        best = max(valid_neighbors, key=lambda nid: sizes[nid - 1])
+
+        # reassign pixels
+        merged[ys, xs] = best
+
+    return merged
+
+def filter_by_merging_small_components(img, threshold, iterations=2):
+    """ filter an image by merging small components with the largest large enough neighbor 
+    
+    Repeatedly label connected components by pixel value, merge small 
+    ones into their largest neighbor, and restore original pixel values.
+
+    Parameters
+    ----------
+    img : ndarray
+        Input image whose pixel values define component types.
+    threshold : int
+        Minimum component size. Smaller components will be merged.
+    iterations : int
+        Number of merge passes to apply.
+
+    Returns
+    -------
+    out : ndarray
+        Image with small components merged and restored pixel values.
+    """
+    out = img.copy()
+
+    for _ in range(iterations):
+        labels, sizes, values = label_components_by_value(out)
+        merged = merge_small_components(labels, sizes, threshold)
+        out = values[merged - 1]   # restore pixel values via component lookup
+
+    return out
+
+def circular_grid(center, radi, segments):
+    """
+    Generate a circular grid of points around a center.
+
+    Parameters
+    ----------
+    center : tuple
+        The (row, col) center of the circles.
+    radi : list or array-like
+        List of radius values for the circular rings.
+    segments : list, array-like, or int
+        If list: number of segments per ring (must match radi length).
+        If int: total number of points distributed across rings 
+                proportional to ring perimeter (2πr).
+
+    Returns
+    -------
+    points : np.ndarray
+        Array of shape (N, 2) with (row, col) coordinates of points.
+    """
+    radi = np.asarray(radi)
+    n_rings = len(radi)
+    row_c, col_c = center
+
+    if isinstance(segments, int):
+        perimeters = 2 * np.pi * radi
+        perimeters[0] = 1e-6  # Avoid division by zero for r=0 (i.e., center point)
+        weights = perimeters / perimeters.sum()
+        segments_list = np.round(weights * segments).astype(int)
+
+        # Force the 0-radius (center point) to have exactly one point
+        if radi[0] == 0:
+            segments_list[0] = 1
+
+        # Adjust total to match exactly
+        diff = segments - segments_list.sum()
+        for i in np.argsort(-weights):
+            if diff == 0:
+                break
+            segments_list[i] += 1
+            diff -= 1
+
+        segments = segments_list
+
+    else:
+        segments = np.asarray(segments)
+
+    assert len(segments) == len(radi), "segments must match radi in length"
+
+    points = []
+    for r, n_seg in zip(radi, segments):
+        if n_seg < 1:
+            continue
+        theta = np.linspace(0, 2*np.pi, n_seg, endpoint=False)
+        row = row_c + r * np.sin(theta)
+        col = col_c + r * np.cos(theta)
+        ring_points = np.stack([row, col], axis=1)
+        points.append(ring_points)
+
+    return np.concatenate(points, axis=0) if points else np.zeros((0, 2))
+
 if __name__ == '__main__':
     test_image_by_windows()
+

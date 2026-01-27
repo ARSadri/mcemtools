@@ -50,6 +50,50 @@ def test_new_shape():
 
     mcemtools.masking.crop_or_pad(np.zeros((3,4,5,6)), (3,4,3,3))
 
+def test_circular_grid():
+    center = (100, 100)
+    radi = [0, 10, 20, 30]
+
+    # Fixed number of segments per ring
+    pts1 = circular_grid(center, radi, [1, 7, 14, 21])
+
+    # Total number of points distributed proportionally
+    pts2 = circular_grid(center, radi, 43)
+
+    # Visualization
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(6, 6))
+    plt.plot(pts1[:,1], pts1[:,0], 'o', label="Fixed")
+    plt.plot(pts2[:,1], pts2[:,0], 'x', label="Proportional")
+    plt.legend()
+    plt.gca().invert_yaxis()
+    plt.axis('equal')
+    plt.title("Circular Grid Comparison")
+    plt.tight_layout()
+    plt.show()
+
+    center = (0, 0)
+    radi = [0, 0.5, 1, 1.5, 2]
+
+    # Fixed number of segments per ring
+    for cnt in range(10, 64):
+        pts1 = circular_grid(center, radi, cnt)
+        # print(pts1)
+        # Visualization
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(3, 3))
+        plt.plot(pts1[:,1], pts1[:,0], 'o', label="Fixed")
+        plt.gca().invert_yaxis()
+        plt.axis('equal')
+        plt.title(f"Circular Grid Comparison {cnt}")
+        plt.tight_layout()
+        plt.xlim([-3, 3])
+        plt.ylim([-3, 3])
+        plt.grid()
+        plt.show()
+
+
+
 if __name__ == '__main__':
     test_new_shape()
     test_markimage()

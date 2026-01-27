@@ -1141,6 +1141,50 @@ def gkern(kernlen):
     kern2d = np.outer(kern1d, kern1d)
     return kern2d/(kern2d.flatten().max())
 
+def gaussian_2d(
+    shape,
+    shiftx=0.0,
+    shifty=0.0,
+    scalex=None,
+    scaley=None,
+    theta=0.0,
+    amplitude=1.0,
+    normalize=True,
+):
+    if not lognflow.has_len(shape):
+        shape = (shape, shape)
+    H, W = shape
+
+    if scalex is None: scalex = H / 6
+    if scaley is None: scaley = W / 6
+
+    # coordinate grid (pixel-centered)
+    y, x = np.mgrid[0:H, 0:W]
+    x = x - (W - 1) / 2 - shiftx
+    y = y - (H - 1) / 2 - shifty
+
+    # rotation
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
+
+    x_rot =  cos_t * x + sin_t * y
+    y_rot = -sin_t * x + cos_t * y
+
+    # Gaussian
+    img = amplitude * np.exp(
+        -0.5 * (
+            (x_rot / scalex) ** 2 +
+            (y_rot / scaley) ** 2
+        )
+    )
+
+    if normalize:
+        s = img.sum()
+        if s > 0:
+            img /= s
+
+    return img
+
 def diffractionPatternMaker(XSZ, YSZ, WINSIZE, n_peaks, n_outliers):    
     inData = np.zeros((XSZ, YSZ), dtype='float32')
     

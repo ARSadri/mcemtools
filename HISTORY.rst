@@ -171,3 +171,7 @@ History
 0.9.15 (2025-11-07)
 -------------------
 * more advanced confidence head
+
+0.9.16 (2026-01-27)
+-------------------
+* recycling and reconstruction error added to the regressor 

@@ -1,6 +1,6 @@
 import numpy as np
 from .masking import annular_mask, mask2D_to_4D, image_by_windows
-from lognflow import printprogress, lognflow
+from lognflow import printprogress, getLogger, has_len
 from skimage.transform import warp_polar
 import scipy
 from itertools import product
@@ -8,6 +8,46 @@ import torch
 import mcemtools
 import torch.nn.functional as F
 from typing import Tuple
+
+def PACBEDs_ch_torch(x, win_shape):
+    """
+    x: (n_x, n_y, n_ch) on CUDA
+    returns: (n_x - n_xw + 1, n_y - n_yw + 1, n_ch)
+    """
+    n_xw, n_yw = win_shape
+
+    # Move to NCHW
+    x = x.permute(2, 0, 1).unsqueeze(0)  # (1, n_ch, n_x, n_y)
+
+    n_ch = x.shape[1]
+
+    # Box filter kernel (one per channel)
+    kernel = torch.ones(
+        (n_ch, 1, n_xw, n_yw),
+        device=x.device,
+        dtype=x.dtype
+    )
+
+    # Grouped convolution = per-channel window sum
+    y = F.conv2d(
+        x,
+        kernel,
+        groups=n_ch
+    )
+
+    # Back to (x, y, ch)
+    return y.squeeze(0).permute(1, 2, 0)
+
+def images_center_of_mass(images, segments_CoM, eps=1e-12):
+    """
+    images: (n_images, num_segments)
+    segments_CoM: (num_segments, 2)
+    returns: (n_images, 2)
+    """
+    weights_sum = images.sum(dim=1, keepdim=True)     # (n_images, 1)
+    com = images @ segments_CoM                       # (n_images, 2)
+    return com / (weights_sum + eps)
+
 
 def interpolate_surface(grid_locations, values, resolution=None, method='cubic'):
     from scipy.interpolate import griddata
@@ -1268,6 +1308,8 @@ def affine_transform_scipy(img, shift = (0, 0), angle_deg = 0, scale = (1, 1), f
     """
     Apply shift, rotation (degrees), and scaling (2-tuple) in a single affine transform.
     """
+    if not has_len(scale): scale = (scale, scale)
+
     if final_shape is None:
         final_shape = img.shape
     angle = np.deg2rad(angle_deg)
@@ -1384,29 +1426,144 @@ def register_affine(in_image: torch.Tensor,
                     scale_row = 1.0,
                     scale_col = 1.0,
                     rot_angle = 0.0,
-                    verbose: bool = False,
+                    verbose: bool = True,
                     loss_func = get_cc,
-                    device: torch.device = None) -> Tuple[float, float, float, float, float, torch.Tensor]:
+                    fig_ax_bins = None,
+                    log_period = 5,
+                    device: torch.device = 'cpu') -> Tuple[float, float, float, float, float, torch.Tensor]:
     """
-    Perform affine registration to maximize cross-correlation (get_cc).
-    Returns: (trans_row, trans_col, scale_row, scale_col, rot_angle, warped_image)
-    Notes:
-      - in_image and target_image should have same H,W. Accepts HxW or 1xHxW / CxHxW.
-      - Uses central finite differences for directional derivatives of the loss
-        (loss = - get_cc(warped, target)).
+    Perform affine registration of ``in_image`` to ``target_image`` by maximizing
+    a similarity measure (default: cross-correlation via ``get_cc``).  
+    Optimization is performed on five affine parameters:
+
+        - ``trans_row`` : translation along rows (Δy)
+        - ``trans_col`` : translation along columns (Δx)
+        - ``scale_row`` : scaling in the row direction
+        - ``scale_col`` : scaling in the column direction
+        - ``rot_angle`` : in-plane rotation angle (radians)
+
+    The optimizer uses **central finite-difference numerical gradients** and
+    gradient descent (optionally with a per-parameter learning-rate vector).
+
+    Parameters
+    ----------
+    in_image : torch.Tensor
+        Input image to be warped. Must have shape ``HxW`` or ``CxHxW``.
+        Multi-channel inputs are flattened across channels for the similarity
+        metric.
+
+    target_image : torch.Tensor
+        Fixed reference image with the same spatial size as ``in_image``.
+
+    n_iters : int, default=200
+        Number of optimization iterations.
+
+    lr : float or sequence of float, default=1e-1
+        Learning rate.  
+        - If a single float: same LR is used for all parameters.  
+        - If a list/tuple of length 5: per-parameter learning rates are used
+          in the order
+          ``[trans_row, trans_col, scale_row, scale_col, rot_angle]``.
+
+    eps_numdiff : float, default=1e-3
+        Step size for central finite-difference numerical derivatives.
+        - If a single float: same eps_numdiff is used for all parameters.  
+        - If a list/tuple of length 5: per-parameter epsilons are used
+          in the order
+          ``[trans_row, trans_col, scale_row, scale_col, rot_angle]``.
+
+    trans_row, trans_col : float, default=0.0
+        Initial translations in pixels.
+
+    scale_row, scale_col : float, default=1.0
+        Initial scale factors along row and column axes.
+
+    rot_angle : float, default=0.0
+        Initial rotation angle (radians).
+
+    verbose : bool, default=True
+        If True, prints progress and optionally shows a scatter-plot of
+        warped-vs-target intensities.
+
+    loss_func : callable, default=get_cc
+        Similarity function. Must accept ``(warped, target)`` and return a
+        scalar similarity score. The optimizer **maximizes** this value by
+        minimizing ``loss = -similarity``.
+
+    fig_ax_bins : int or tuple or None, default=None
+        If provided, enables online visualization using ``plt_hist2`` by
+        histogramming (warped, target) pixel pairs. Ignored outside notebooks.
+
+    log_period : float, default=5
+        Minimum time interval (seconds) between verbose log prints.
+
+    device : torch.device or None, default=None
+        Device for computation. If None, uses ``in_image.device`` or CPU.
+
+    Returns
+    -------
+    trans_row_f : float  
+        Optimized row translation.
+
+    trans_col_f : float  
+        Optimized column translation.
+
+    scale_row_f : float  
+        Optimized vertical scale.
+
+    scale_col_f : float  
+        Optimized horizontal scale.
+
+    rot_angle_f : float  
+        Optimized rotation angle in radians.
+
+    warped_image : torch.Tensor  
+        Final warped version of ``in_image`` with the same shape as input.
+
+    Notes
+    -----
+    - ``in_image`` and ``target_image`` must have identical spatial dimensions.
+    - Works with 2D grayscale or multi-channel images; for similarity evaluation
+      all channels are flattened.
+    - Numerical gradients use central finite differences:
+      ``∂L/∂p ≈ (L(p+ε) - L(p-ε)) / (2ε)``.
+    - The function maximizes the similarity metric by minimizing ``-similarity``.
+    - ``warp_image_with_params`` must implement the affine transformation
+      defined by the five parameters.
     """
-    # dispatch device
-    if device is None:
-        device = in_image.device if isinstance(in_image, torch.Tensor) else torch.device('cpu')
+
+    try:
+        device_orig = in_image.device
+    except:
+        device_orig = device
 
     try:
         if len(lr) == 5:
             lr=torch.tensor(lr).cuda()
-    except: assert lr == float(lr), 'lr can be a float number or a list of five float numbers'
+    except: assert lr == float(lr), \
+        'lr can be a float number or a list of five float numbers'
+    try:
+        if len(eps_numdiff) == 5:
+            eps_numdiff=torch.tensor(eps_numdiff).to(device)
+    except: 
+        assert eps_numdiff == float(eps_numdiff), \
+            'eps_numdiff can be a float number or a list of five float numbers'
+        eps_numdiff=torch.tensor([eps_numdiff]*5).to(device)
 
     # prepare tensors on device and float
     inp = in_image.to(device=device, dtype=torch.float32)
     tgt = target_image.to(device=device, dtype=torch.float32)
+
+    if verbose:
+        import time
+        if fig_ax_bins is not None:
+            from lognflow.plt_utils import plt_hist2, plt
+            from lognflow.utils import is_notebook
+            _is_notebook = is_notebook()
+            if _is_notebook:
+                if verbose:
+                    print('Visualising the relative pixels values in a notebook')
+                from IPython.display import display, clear_output
 
     # ensure shape compatibility: use single-channel registration (flatten across channels)
     # if multi-channel, we'll average channels when computing CC
@@ -1458,41 +1615,53 @@ def register_affine(in_image: torch.Tensor,
         return -cc, warped
 
     # main optimization loop
+    if verbose:
+        time_time_log_perv = time.time()
+    base_loss_perv = 1.0e20
     for it in range(n_iters):
-        base_loss, base_warped = compute_loss_from_pvals(pvals)
+        base_loss, _ = compute_loss_from_pvals(pvals)
 
         # compute numerical gradient for each parameter using central difference
         grads = torch.zeros_like(pvals)
         for i in range(len(pvals)):
+            if eps_numdiff[i] == 0:
+                continue
             # perturb +/- eps
             p_plus = pvals.clone()
             p_minus = pvals.clone()
-            p_plus[i] += eps_numdiff
-            p_minus[i] -= eps_numdiff
+            p_plus[i] += eps_numdiff[i]
+            p_minus[i] -= eps_numdiff[i]
 
             loss_plus, _ = compute_loss_from_pvals(p_plus)
             loss_minus, _ = compute_loss_from_pvals(p_minus)
             # central difference
-            grad_i = (loss_plus - loss_minus) / (2.0 * eps_numdiff)
+            grad_i = (loss_plus - loss_minus) / (2.0 * eps_numdiff[i])
             grads[i] = grad_i
 
         # gradient descent step: p := p - lr * grad
-        # use small learning rates for translation in pixels vs angle vs scale;
-        # user-specified lr is global; the user can tune. Here we make a simple per-param scaling:
-        # scale translations in pixels more conservatively than rotation/scale or we can keep uniform.
-        # I'll apply a small nominal scaling factor to make default lr reasonable:
-        per_param_scale = torch.tensor([1.0, 1.0, 0.5, 0.5, 0.5], device=device)  # tuneable heuristic
-        pvals = pvals - (lr * per_param_scale * grads)
+        pvals = pvals - lr * grads
 
-        # optional: clamp scales to reasonable positive range to avoid flips
-        pvals[2] = torch.clamp(pvals[2], 0.1, 5.0)  # scale_row
-        pvals[3] = torch.clamp(pvals[3], 0.1, 5.0)  # scale_col
+        if verbose:
+            time_time_log = time.time()
+            if (time_time_log > time_time_log_perv + log_period) or (it == n_iters - 1):
+                time_time_log_perv = time_time_log
+                if fig_ax_bins is not None:
+                    _, final_warped = compute_loss_from_pvals(pvals)
+                    if _is_notebook:
+                        plt.close()
+                        clear_output()
+                        fig, ax, x_edges, y_edges = plt_hist2(np.column_stack((final_warped.ravel(), tgt.ravel())), bins = fig_ax_bins, return_bins = True)
+                        ax.plot([y_edges.min(), x_edges.min()], [y_edges.max(), x_edges.max()], 'r-.')
+                        display(fig)
+                print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
+        
+        if torch.abs(base_loss - base_loss_perv) < 1e-12:
+            break
+        base_loss_perv = base_loss
 
-        if verbose and (it % max(1, n_iters // 10) == 0 or it == n_iters - 1):
-            print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
-
+    print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
     # final warp with optimized params
-    final_loss, final_warped = compute_loss_from_pvals(pvals)
+    _, final_warped = compute_loss_from_pvals(pvals)
     # unpack final params
     trans_row_f = float(pvals[0].item())
     trans_col_f = float(pvals[1].item())
@@ -1501,7 +1670,7 @@ def register_affine(in_image: torch.Tensor,
     rot_angle_f = float(pvals[4].item())
 
     # return final parameters and warped image (same shape as input)
-    return trans_row_f, trans_col_f, scale_row_f, scale_col_f, rot_angle_f, final_warped
+    return trans_row_f, trans_col_f, scale_row_f, scale_col_f, rot_angle_f, final_warped.to(device_orig)
     
 def test_register_affine():
     in_img = np.random.rand(100, 100)
