@@ -38,13 +38,20 @@ def open_muSTEM_binary(filename):
 
 def show_detector_response(det_response, **kwargs_plt_imshow):
     n_ch, n_r, n_c = det_response.shape
-    fig, ax = lognflow.plt_utils.plt_imshow(det_response.sum(0), **kwargs_plt_imshow)
-    det_com = mcemtools.analysis.CoM_detector(det_response) + np.array([n_r//2, n_c//2])
+    det_image = (det_response * np.arange(n_ch)[:, None, None]).sum(0)
+    det_min = det_image.min()
+    det_max = det_image.max()
+    fig, ax = lognflow.plt_utils.plt_imshow(det_image, **kwargs_plt_imshow)
+    cent_x, cent_y = scipy.ndimage.center_of_mass(np.ones((n_r, n_c)) / (n_r * n_c))
+    det_com = mcemtools.analysis.CoM_detector(det_response) + np.array([cent_x, cent_y])
     lognflow.printv(det_com)
     lognflow.printv(det_response)
-    for cnt, img in enumerate(det_response):
-        ax.plot(det_com[cnt, 1] - 2, det_com[cnt, 0], '.r')
-        ax.text(det_com[cnt, 1] - 1, det_com[cnt, 0], cnt)
+    for cnt in range(n_ch):
+        row, col = int(det_com[cnt, 1]), int(det_com[cnt, 0])
+        if det_max > det_min:
+            text_gray = 1 if (det_image[col, row] - det_min) / (det_max - det_min) < 0.5 else 0
+        ax.plot(det_com[cnt, 1], det_com[cnt, 0], '.r')
+        ax.text(det_com[cnt, 1] + 1, det_com[cnt, 0], cnt, color = (text_gray, text_gray, text_gray))
     return fig, ax
 
 def check_raw_filename(fpath, scan_shape = None):
@@ -918,6 +925,7 @@ def segmented_detector_maker(
     >>> plt.title("Segment 0")
     >>> plt.show()
     """
+    
     angle_rad = np.deg2rad(angle_deg)
     n_rings = len(rings_radii_ranges)
 
@@ -968,13 +976,10 @@ def segmented_detector_maker(
     valid = overlap > 0
     masks[:, valid] /= overlap[None, valid]
 
-    return masks
+    det_segs_ringid = np.repeat(
+        np.arange(len(rings_num_segments)), rings_num_segments)
 
-
-    masks[:, valid] /= overlap[None, valid]
-
-    return masks
-
+    return masks, det_segs_ringid
 
 def panther_maker(
     length: int,
@@ -1212,3 +1217,26 @@ def diffractionPatternMaker(XSZ, YSZ, WINSIZE, n_peaks, n_outliers):
             inMask[ winXStart : winXEnd, winYStart : winYEnd ] = 0;    
     
     return(inData, inMask, randomLocations)
+
+
+def detector_response_edge(det_resp_edge):
+    def edge_bysum(img):
+        img[1:-1, 1:-1] += img[ :-2, 0:-2] +\
+                        img[1:-1, 0:-2] +\
+                        img[2:  , 0:-2] +\
+                        img[ :-2, 1:-1] +\
+                        img[2:  , 1:-1] +\
+                        img[ :-2, 2:  ] +\
+                        img[1:-1, 2:  ] +\
+                        img[2:  , 2:  ]
+        return (0<img)&(img<6)
+
+    for cnt, img in enumerate(det_resp_edge):
+        img[img < 0.75 * img.max()] = 0
+        img[img>0] = 1
+        img = edge_bysum(img)
+        det_resp_edge[cnt] = img
+    detrsp_edge = det_resp_edge.sum(0)
+    detrsp_edge[detrsp_edge > 0] = 1
+    detrsp_edge = 1 - mcemtools.remove_islands_by_size(1 - detrsp_edge, 10)
+    return detrsp_edge

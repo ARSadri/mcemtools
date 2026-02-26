@@ -179,3 +179,8 @@ History
 0.10.0 (2026-01-27)
 -------------------
 * reconstruction error of the regressor is weighted.
+
+0.10.1 (2026-01-27)
+-------------------
+* better show_detector_response
+* segmented_detector_maker returns the ring ids
