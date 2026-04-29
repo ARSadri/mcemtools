@@ -175,8 +175,8 @@ class image_by_windows:
         n_r, n_c = self.img_shape[:2]
         skip_r, skip_c = self.skip
         
-        assert win_shape[0]<= n_r, 'win must be smaller than the image'
-        assert win_shape[1]<= n_c, 'win must be smaller than the image'
+        assert win_shape[0] <= n_r, 'win must be smaller than the image'
+        assert win_shape[1] <= n_c, 'win must be smaller than the image'
 
         if(method == 'fixed'):
             

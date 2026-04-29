@@ -536,9 +536,69 @@ def sum_4D(data4D, weight4D = None):
     I4D_cpy = data4D.copy()
     if weight4D is not None:
         I4D_cpy = I4D_cpy * weight4D
-    PACBED = I4D_cpy.sum(1).sum(0).squeeze()
-    totI = I4D_cpy.sum(3).sum(2).squeeze()
-    return totI, PACBED
+    PACBED = I4D_cpy.sum((0, 1))
+    STEM = I4D_cpy.sum((2, 3))
+    return STEM, PACBED
+
+def bin_4D(data, real_shape=None, qspace_shape=None, order = 1, preserve_range=True, **kwargs):
+    """
+    Bin a 4D-STEM dataset.
+
+    Parameters
+    ----------
+    data : ndarray
+        Input array of shape (n_x, n_y, n_r, n_c).
+    real_shape : tuple or None
+        Desired output shape for scan dimensions (nx_out, ny_out).
+    qspace_shape : tuple or None
+        Desired output shape for diffraction dimensions (nr_out, nc_out).
+    preserve_range : bool
+        Keep original value scaling.
+
+    Returns
+    -------
+    ndarray
+        Binned dataset of shape (nx_out, ny_out, nr_out, nc_out).
+    """
+
+    #-----------------
+    # n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
+    # method_pos: str = 'skip', method_pix: str = 'linear',
+    # conv_function = sum_4D, skip = (1, 1), logger = None
+    n_x, n_y, n_r, n_c = data.shape
+
+    if 'n_pos_in_bin' in kwargs:
+        if real_shape is None:
+            real_shape = (n_x // kwargs['n_pos_in_bin'], n_y // kwargs['n_pos_in_bin'])
+    if 'n_pix_in_bin' in kwargs:
+        if qspace_shape is None:
+            qspace_shape = (n_r // kwargs['n_pix_in_bin'], n_c // kwargs['n_pix_in_bin'])
+    #-----------------
+
+    from skimage.transform import resize
+
+    if real_shape is None:
+        real_shape = (n_x, n_y)
+    if qspace_shape is None:
+        qspace_shape = (n_r, n_c)
+
+    data_rs = resize(
+        data,
+        (real_shape[0], real_shape[1], n_r, n_c),
+        order=order,
+        anti_aliasing=True,
+        preserve_range=preserve_range
+    )
+
+    data_q = resize(
+        data_rs,
+        (real_shape[0], real_shape[1], qspace_shape[0], qspace_shape[1]),
+        order=order,
+        anti_aliasing=True,
+        preserve_range=preserve_range
+    )
+
+    return data_q.astype(data.dtype)
 
 def conv_4D_single(grc, sharables):
     imgbywin, data4D = sharables
@@ -616,7 +676,7 @@ def bin_image(data, factor = 2, logger = None):
         logger(f'... bin_image done with shape {data_binned.shape}')
     return data_binned
 
-def bin_4D(data4D, 
+def bin_4D_conv(data4D, 
            n_pos_in_bin: int = 1, n_pix_in_bin: int = 1,
            method_pos: str = 'skip', method_pix: str = 'linear',
            conv_function = sum_4D, skip = (1, 1), logger = None):
@@ -850,107 +910,179 @@ def cross_correlation_4D(data4D_a, data4D_b, mask4D = None):
         corr_mat = corr_mat / data4D_a.shape[2] / data4D_a.shape[3]
     return corr_mat
 
-def locate_atoms(stem, min_distance = 3, min_distance_init = 3,
-                 maxfilter_size = 0, reject_too_close = False,
-                 rgflib_fitBackground_kwargs = None, logger = None):
-    
-    n_x, n_y = stem.shape
-    
-    nSTEM = stem.max() - stem.copy()
-    
-    from skimage.feature import peak_local_max
-    import scipy.ndimage
-    
-    if rgflib_fitBackground_kwargs is not None:
-        try:
-            from RobustGaussianFittingLibrary import fitBackground
-        except Exception as e:
-            print('You need to >>> pip install RobustGaussianFittingLibrary')
-            raise e
-        if logger is not None: logger('getting mp')
-        mp = fitBackground(nSTEM, **rgflib_fitBackground_kwargs)
-        if logger is not None: logger('mp calculated!')
-        SNR = nSTEM - mp[0]
-        mpstd = mp[1]
-        SNR[mpstd > 0] /= mpstd[mpstd > 0]
-        SNR[mpstd == 0] = 0
-        nSTEM = SNR.copy()
-    
-    if maxfilter_size:
-        if logger is not None: logger('max filter!')
-        image_max = scipy.ndimage.maximum_filter(
-            nSTEM, size=maxfilter_size, mode='constant')
-    else:
-        image_max = nSTEM.copy()
-    if logger is not None: logger('finding peak local max!')
-    coordinates = peak_local_max(image_max, min_distance=min_distance_init)
-    
-    if(reject_too_close):
-        inds = []
-        if logger is not None: logger('rejecting too close ones!')
-        dist_coord_to_com = np.zeros(len(coordinates))
-        move_by_com = np.zeros((len(coordinates), 2))
-        if logger is not None: pbar = printprogress(len(coordinates),
-                                                    print_function = logger)
-        for ccnt, coord in enumerate(coordinates):
-            coord_0, coord_1 = coord
-            r_start = coord_0 - min_distance
-            r_end   = coord_0 + min_distance + 1
-            c_start = coord_1 - min_distance
-            c_end   = coord_1 + min_distance + 1
-            
-            if ( r_end >= n_x):
-                r_end = n_x
-                r_start = 2 * coord_0 - r_end
-            if ( r_start < 0):
-                r_start = 0
-                r_end = 2 * coord_0
-            if ( c_end >= n_y):
-                c_end = n_y
-                c_start = 2 * coord_1 - c_end
-            if ( c_start < 0):
-                c_start = 0
-                c_end = 2 * coord_1
-            
-            local_stem = nSTEM[r_start: r_end, c_start: c_end].copy()
+def locate_atoms(
+        snr,
+        snr_threshold=1.0,
+        snr_mask = None,
+        min_n_pix = 1,
+        peak_win_shape=(2, 2),   # (height, width) of window for refinement
+        refinement_iters=3,
+        margin = (0, 0),
+        merge_dist = 3
+    ):
+    """
+    Find refined analog center-of-mass (COM) coordinates of peaks in an SNR image.
 
-            cy, cx = scipy.ndimage.center_of_mass(local_stem)
-            cx += 0.5
-            cy += 0.5
-            move_by_com[ccnt] = np.array([cx - local_stem.shape[0]/2,
-                                          cy - local_stem.shape[1]/2])
-            dist_coord_to_com[ccnt] = (
-                move_by_com[ccnt, 0]**2 + move_by_com[ccnt, 1]**2)**0.5
-            if logger is not None: pbar()
+    Parameters
+    ----------
+    snr : 2D array
+        The SNR image of bright field, obtaibed via BrightField_STEM/DarkField_STEM
+    threshold : float
+        snr_mask = (snr > threshold).
+    peak_win_shape : tuple(int, int)
+        Full window size (height, width). E.g. (5,5) means a 5×5 region
+        centered on the current peak for COM refinement.
+    refinement_iters : int
+        Number of COM refinement iterations.
+
+    Returns
+    -------
+    refined_coords : list of (cy, cx) floats
+        Refined (analog) COM coordinates for each connected component.
+    mask_centers : 2D uint8 array
+        Binary mask with 1 at the final rounded peak positions.
+    """
+    import scipy.ndimage
+    import scipy.ndimage as ndi
+    from scipy.signal import convolve2d
+
+    snr = np.asarray(snr, dtype=float)
+    H, W = snr.shape
+
+    # Threshold mask
+    if snr_mask is None:
+        snr_mask = mcemtools.remove_islands_by_size(snr > snr_threshold, min_n_pix=min_n_pix)
         
-        if logger is not None: logger('getting typical distances!')
-        try:
-            from RobustGaussianFittingLibrary import fitValue
-        except Exception as e:
-            print('You need to >>> pip install RobustGaussianFittingLibrary')
-            raise e
-        dist2 = scipy.spatial.distance.cdist(coordinates, coordinates)
-        dist2 = dist2 + np.diag(np.inf + np.zeros(coordinates.shape[0]))
-        dist2_min = dist2.min(1)
-        mP = fitValue(dist2_min, MSSE_LAMBDA = 2.0)
-        dist2_threshold = mP[0] / 2
-        dist2_threshold = np.minimum(dist2_threshold, dist2.min(1).mean())
-        dist2_cpy = dist2.copy()
-        
-        if logger is not None: logger('keeping those with normal distances!')
-        for single_ind, single_dist2 in enumerate(dist2_cpy):
-            _tmp = dist_coord_to_com[single_dist2 < dist2_threshold].copy()
-            if _tmp.any():
-                current_com = dist_coord_to_com[single_ind]
-                best_com = _tmp.min()
-                if current_com < best_com:
-                    inds.append(single_ind)
-            else:
-                inds.append(single_ind)
-        coordinates = coordinates + move_by_com
-        coordinates = coordinates[np.array(inds)]
-        
-    return coordinates
+    # Connected components
+    labels, num = ndi.label(snr_mask)
+
+    mask_centers = np.zeros_like(labels, dtype=np.uint8)
+    refined_coords = []
+
+    # Extract full window sizes
+    win_h, win_w = peak_win_shape
+    rad_h = win_h // 2
+    rad_w = win_w // 2
+
+    # Helper: refine once using weighted centroid in window
+    def refine_once(cy, cx):
+        iy = int(round(cy))
+        ix = int(round(cx))
+
+        # Window bounds
+        y0 = max(0, iy - rad_h)
+        y1 = min(H, iy + rad_h + 1)
+        x0 = max(0, ix - rad_w)
+        x1 = min(W, ix + rad_w + 1)
+
+        patch = snr[y0:y1, x0:x1]
+        if patch.size == 0:
+            return cy, cx
+
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        w = patch
+
+        wsum = w.sum()
+        if wsum <= 0:
+            return cy, cx
+
+        cy_new = (yy * w).sum() / wsum
+        cx_new = (xx * w).sum() / wsum
+
+        return cy_new, cx_new
+
+    # For each component
+    for k in range(1, num + 1):
+        cy0, cx0 = ndi.center_of_mass(labels == k)
+        if np.isnan(cy0):
+            continue
+
+        cy, cx = cy0, cx0
+
+        # Refinement iterations
+        for _ in range(refinement_iters):
+            cy, cx = refine_once(cy, cx)
+
+        # Mark pixel position
+        iy = int(round(cy))
+        ix = int(round(cx))
+
+        if margin[0] <= iy < H - margin[0] and margin[1] <= ix < W - margin[1]:
+            refined_coords.append((cy, cx))
+            mask_centers[iy, ix] = 1
+
+    # ------------------------------------------------------------------
+    # MERGE COORDS THAT ARE TOO CLOSE (< merge_dist), REPEAT UNTIL STABLE
+    # ------------------------------------------------------------------
+
+    coords = np.array(refined_coords, dtype=float)
+
+    changed = True
+    while changed and len(coords) > 1:
+        changed = False
+        N = len(coords)
+
+        # Pairwise distances
+        d2 = np.sum((coords[:, None, :] - coords[None, :, :])**2, axis=-1)
+        np.fill_diagonal(d2, np.inf)
+
+        # Find all pairs to merge
+        pairs = np.argwhere(d2 < merge_dist**2)
+
+        if len(pairs) == 0:
+            break
+
+        changed = True
+
+        # Greedy cluster building
+        used = set()
+        new_coords = []
+
+        for i, j in pairs:
+            if i in used or j in used:
+                continue
+            cluster = {i, j}
+
+            # Grow cluster: anything close to any member
+            grow = True
+            while grow:
+                grow = False
+                for k in range(N):
+                    if k in cluster:
+                        continue
+                    if any(np.linalg.norm(coords[k] - coords[m]) < merge_dist for m in cluster):
+                        cluster.add(k)
+                        grow = True
+
+            used |= cluster
+            # Replace with average
+            new_coords.append(coords[list(cluster)].mean(axis=0))
+
+        # Add the ones not touched
+        for k in range(N):
+            if k not in used:
+                new_coords.append(coords[k])
+
+        coords = np.array(new_coords)
+
+    # ---------------------------------------------------------
+    # REFINEMENT AGAIN AFTER MERGING
+    # ---------------------------------------------------------
+    refined_coords_final = []
+    mask_centers[:] = 0
+
+    for cy, cx in coords:
+        for _ in range(refinement_iters):
+            cy, cx = refine_once(cy, cx)
+
+        refined_coords_final.append((cy, cx))
+
+        iy = int(round(cy))
+        ix = int(round(cx))
+        if 0 <= iy < H and 0 <= ix < W:
+            mask_centers[iy, ix] = 1
+
+    return refined_coords_final, mask_centers
 
 def stem_image_nyquist_interpolation(
         StemImage, xlen, ylen, alpha, Knought, npixout, npiyout):
@@ -1598,7 +1730,8 @@ def register_affine(in_image: torch.Tensor,
     params = ['trans_row', 'trans_col', 'scale_row', 'scale_col', 'rot_angle']
     # list-style for convenience
     pvals = torch.tensor([trans_row, trans_col, scale_row, scale_col, rot_angle], device=device, dtype=torch.float32)
-
+    print('Columns of the printed outputs are: ')
+    print('trans_row, trans_col, scale_row, scale_col, rot_angle')
     # small helper to compute loss for a given param vector
     def compute_loss_from_pvals(pvec):
         tr = float(pvec[0].item())
@@ -1609,10 +1742,11 @@ def register_affine(in_image: torch.Tensor,
         warped = warp_image_with_params(inp, tr, tc, sr, sc, ra)
         # flatten to vectors
         
-        cc = loss_func(warped, tgt)
-
+        # loss = ((warped - tgt)**2).max()
+        loss = -loss_func(warped, tgt)
+        
         # we want to maximize CC, so loss = -cc
-        return -cc, warped
+        return loss, warped
 
     # main optimization loop
     if verbose:

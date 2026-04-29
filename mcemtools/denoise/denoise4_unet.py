@@ -73,9 +73,9 @@ def train_STEM(
                 ind_cnt += DATOS_inds.shape[0]
                 inds = trainable_inds[DATOS_inds].copy()
                 loss = torch_handler.update(inds)
-                logger.log_var(f'{logger_prefix}_denoiser/training/training_loss', loss)
+                logger.record(f'{logger_prefix}_denoiser/training/training_loss', loss)
                 if (time.time() - time_time > 30) :
-                    time_vals, loss_vals = logger.get_var(
+                    time_vals, loss_vals = logger.get_record(
                         f'{logger_prefix}_denoiser/training/training_loss')
                     loss_change = loss_vals.mean() - perv_loss
                     perv_loss = loss_vals.mean()
@@ -86,7 +86,7 @@ def train_STEM(
                            f', change: {loss_change:.6f}')
                     time_time = time.time()
         try:
-            logger.log_plot(f'{logger_prefix}_denoiser/training/losses', 
+            logger.plot(f'{logger_prefix}_denoiser/training/losses', 
                             loss_vals, time_vals, time_tag = False)
         except:
             pass
@@ -243,9 +243,9 @@ def train_I4D(
             if ValueError_reset:
                 ValueError_cnt = 0
             
-            logger.log_var('I4D_denoiser/train/training_loss', loss)
+            logger.record('I4D_denoiser/train/training_loss', loss)
             if (time.time() - time_time > 20) :
-                time_vals, loss_vals = logger.get_var(
+                time_vals, loss_vals = logger.get_record(
                     'I4D_denoiser/train/training_loss')
                 loss_change = loss_vals.mean() - perv_loss
                 perv_loss = loss_vals.mean()
@@ -256,8 +256,11 @@ def train_I4D(
                 time_time = time.time()
                 
     try:
-        logger.log_plot('I4D_denoiser/train/losses', 
-                        loss_vals, time_vals, time_tag = False)
+        if len(loss_vals) > 30:
+            loss_vals_ = loss_vals[30:].copy()
+            time_vals_ = time_vals[30:].copy()
+        logger.plot('I4D_denoiser/train/losses', 
+                        loss_vals_, time_vals_, time_tag = False)
         logger.save('I4D_denoiser/train/losses', 
                         loss_vals, time_tag = False)
     except:
@@ -310,7 +313,7 @@ def denoise4_unet(
     CoM_denoiser_model_type,
     ):
 
-    FLAG_train_STEM, include_training = include_training
+    FLAG_train_STEM, _ = include_training
     include_training = any(include_training)
     pretrained_STEM_fpath, pretrained_model_fpath = pretrained_fpaths_tuple
     
@@ -417,7 +420,7 @@ def denoise4_unet(
                         device = device,
                         logger = logger,
                         learning_rate = hyps_STEM['learning_rate'],
-                        momentum = hyps_STEM['learning_momentum'],
+                        learning_momentum = hyps_STEM['learning_momentum'],
                         pass_indices_to_model = False) 
                 
                 _, denoised_STEM = infer_STEM(torch_handler_STEM,  data_gen_STEM, 
@@ -565,7 +568,7 @@ def denoise4_unet(
                             device = device,
                             logger = logger,
                             learning_rate = hyps_CoM['learning_rate'],
-                            momentum = hyps_CoM['learning_momentum'],
+                            learning_momentum = hyps_CoM['learning_momentum'],
                             pass_indices_to_model = False) 
                     
                     _, denoised_CoM = infer_STEM(torch_handler_CoM,  data_gen_CoM, 
@@ -657,7 +660,7 @@ def denoise4_unet(
     logger('Making a training dataset using noisy')
     data_gen_I4D = mcemtools.data_maker_4D(
         data4D_noisy.astype('float32'), data4D_nonoise, len_side = n_probes,
-        trainable_area = trainable_area)
+        trainable_area_I4D = trainable_area)
     
     recon = data_gen_I4D.reconstruct4D(data_gen_I4D.GNDTruth)
     frame = mcemtools.data4D_to_frame(recon[
@@ -744,8 +747,8 @@ def denoise4_unet(
         lossFunc = criterion_I4D,
         device = device,
         logger = logger,
-        learning_rate = 1e-6,
-        momentum = 1e-7,
+        learning_rate = 1e-6,   #inisitally small
+        learning_momentum = 1e-7,
         pass_indices_to_model = True,
         fix_during_infer = True,
         test_mode = hyps_I4D['test_mode'])    
@@ -835,12 +838,6 @@ def denoise4_unet(
             logger.imshow('I4D_denoiser/com_xy/com',
                            com_x + 1j * com_y, cmap = 'real_imag')
             
-            data4D_denoised = data_gen_I4D.reconstruct4D(data4D_denoised)
-            logger(f'data4D_denoised: {data4D_denoised.shape}')
-            frame = mcemtools.data4D_to_frame(
-                data4D_denoised[edgew:n_show+edgew, edgew:n_show+edgew])
-            logger.imshow('I4D_denoiser/sample_denoised/denoised', frame)
-
             com_x, com_y = mcemtools.centre_of_mass_4D(
                 data4D_denoised[edgew:-edgew, edgew:-edgew])
             logger.imshow('I4D_denoiser/com_complex/com',
@@ -880,7 +877,7 @@ def denoise4_unet(
                 logger('labels are diffused too.')
                 recon = data_gen_I4D.reconstruct4D(data_gen_I4D.Y_label)
                 frame = mcemtools.data4D_to_frame(
-                    recon[edgew:n_show+edgew, edgew:n_show+edgew])
+                    recon[edgew:n_canvas_patterns+edgew, edgew:n_canvas_patterns+edgew])
                 logger.imshow('I4D_denoiser/sample/data4D_diffused', frame)
             
             logger('training dataset is modified with diffused input')
@@ -919,7 +916,7 @@ def criterion_I4D_LAGMUL_recom(kcnt, n_ksweeps):
         LAGMUL = 0
     return LAGMUL
 
-def denoise4D_unet(
+def denoise4D_unet_old(
     logs_root, 
     hyps_I4D,
     criterion_I4D_LAGMUL = criterion_I4D_LAGMUL_recom,
@@ -935,7 +932,7 @@ def denoise4D_unet(
         'make sure you have a ref directory in logs_root that includes noisy.npy'
     
     logger = lognflow(logs_root, log_dir_prefix = 'denoised4D_UNet')
-    logger.log_code()
+    logger.code()
     logger(f'hyps_I4D:{hyps_I4D}')
     logger.save('I4D_denoiser/hyps_I4D', hyps_I4D, time_tag = False)
 
@@ -1096,7 +1093,7 @@ def denoise4D_unet(
         device = device,
         logger = logger,
         learning_rate = learning_rate_avoid_nan,
-        momentum = momentum_avoid_nan,
+        learning_momentum = momentum_avoid_nan,
         pass_indices_to_model = True,
         fix_during_infer = True,
         test_mode = hyps_I4D['test_mode'])    

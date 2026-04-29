@@ -184,3 +184,7 @@ History
 -------------------
 * better show_detector_response
 * segmented_detector_maker returns the ring ids
+
+0.10.2 (2026-03-03)
+-------------------
+* Fixed bugs in the denoiser

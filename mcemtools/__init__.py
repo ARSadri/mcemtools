@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.10.1'
+__version__ = '0.10.2'
 
 from .mcemtools import viewer_4D, nvidia_smi_line
 
@@ -21,7 +21,8 @@ from .masking import (annular_mask,
                       image_by_windows,
                       markimage,
                       mask2D_to_4D,
-                      remove_islands_by_size)
+                      remove_islands_by_size,
+                      crop_or_pad)
 
 from .tensor_svd import svd_fit, svd_eval
 

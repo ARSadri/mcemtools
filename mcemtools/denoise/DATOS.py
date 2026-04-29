@@ -211,7 +211,7 @@ class nn_from_torch:
                  logger = print,
                  pass_indices_to_model = False,
                  learning_rate = 1e-6,
-                 momentum = 1e-7,
+                 learning_momentum = 1e-7,
                  fix_during_infer = False,
                  optimizer = None,
                  preds_as_tuple_index = None,
@@ -244,7 +244,7 @@ class nn_from_torch:
         elif optimizer is None:
             self.optimizer = torch.optim.SGD(self.torchModel.parameters(),
                                              lr = learning_rate,
-                                             momentum = momentum)
+                                             momentum = learning_momentum)
         else:
             self.optimizer = optimizer
         
