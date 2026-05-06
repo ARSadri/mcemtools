@@ -1037,7 +1037,7 @@ def panther_maker(
         outer_radius = int(brightfield_radius / RING_0_to_1_RATIO)
 
     # Build the base segmented detector
-    det_resp = mcemtools.data.segmented_detector_maker(
+    det_resp, ring_ids = mcemtools.data.segmented_detector_maker(
         length,
         rings_radii_ranges=[
             [0, brightfield_radius // 2],

@@ -821,6 +821,7 @@ def CoM_detector(det_resp):
     return np.array(mask_coms)
 
 def CoM_channel_torch(data_per_ch, mask_coms):
+
     com_x_ch = []
     com_y_ch = []
     for cnt, mask_com in enumerate(mask_coms):

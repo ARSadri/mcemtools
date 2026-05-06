@@ -188,3 +188,7 @@ History
 0.10.2 (2026-03-03)
 -------------------
 * Fixed bugs in the denoiser
+
+0.11.0 (2026-05-06)
+-------------------
+* CoM corrections and leaving Monash University
