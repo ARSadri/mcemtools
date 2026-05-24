@@ -192,3 +192,7 @@ History
 0.11.0 (2026-05-06)
 -------------------
 * CoM corrections and leaving Monash University
+
+0.11.1 (2026-05-24)
+-------------------
+* Fixed the affine transform and registration function and added a test

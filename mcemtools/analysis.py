@@ -1,13 +1,16 @@
 import numpy as np
-from .masking import annular_mask, mask2D_to_4D, image_by_windows
-from lognflow import printprogress, getLogger, has_len
-from skimage.transform import warp_polar
-import scipy
-from itertools import product
-import torch
+from   lognflow import printprogress, getLogger, has_len
+from   skimage.transform import warp_polar
+from   itertools import product
 import mcemtools
+import time
+import scipy
+import matplotlib.pyplot as plt
+import torch
 import torch.nn.functional as F
-from typing import Tuple
+import torch.optim as optim
+
+from .masking import annular_mask, mask2D_to_4D, image_by_windows
 
 def PACBEDs_ch_torch(x, win_shape):
     """
@@ -1437,389 +1440,321 @@ def get_cc(vec_a: torch.Tensor, vec_b: torch.Tensor, eps: float = 1e-8) -> torch
     vec_2 = (vb - vb.mean()) / (b_std + eps)
     return (vec_1 * vec_2).mean()
 
-def affine_transform_scipy(img, shift = (0, 0), angle_deg = 0, scale = (1, 1), final_shape = None, order=1, prefilter=True):
-    """
-    Apply shift, rotation (degrees), and scaling (2-tuple) in a single affine transform.
-    """
-    if not has_len(scale): scale = (scale, scale)
+def default_mse_fallback(x, y):
+    return F.mse_loss(x, y)
 
-    if final_shape is None:
-        final_shape = img.shape
-    angle = np.deg2rad(angle_deg)
-
-    S = np.diag(scale)
-    R = np.array([[np.cos(angle), -np.sin(angle)],
-                  [np.sin(angle),  np.cos(angle)]])
-    M = R @ S 
-
-    M_inv = np.linalg.inv(M)
-
-    # Centering: we want to keep final_shape centered after transform
-    in_center = 0.5 * np.array(img.shape[::-1])  # (x, y)
-    out_center = 0.5 * np.array(final_shape[::-1])
-    offset = in_center - M_inv @ out_center - shift[::-1]  # reverse because of (row,col)
-    from scipy.ndimage import affine_transform
-
-    transformed = affine_transform(
+def affine_transform_differentiable(
         img,
-        M_inv,
-        offset=offset,
-        output_shape=final_shape,
-        order=order,
-        prefilter=prefilter
+        scale_rows_clms=(1.0, 1.0),
+        theta_deg=0.0,
+        t_rows_clms=(0.0, 0.0),
+):
+    """
+    Fully transform differentiable w.r.t. translation, rotation and scale.
+
+        1. translate
+        2. rotate about image centre
+        3. scale about image centre
+
+    Positive t_clms -> move image right
+    Positive t_rows -> move image down
+    Positive theta  -> CCW rotation around the center
+    scale < 1       -> shrink around the center in direction of rows and clms
+    scale > 1       -> enlarge around the center in direction of rows and clms
+    """
+
+    B, C, H, W = img.shape
+
+    device = img.device
+    dtype = img.dtype
+
+    sy = torch.as_tensor(scale_rows_clms[0], dtype=dtype, device=device)
+    sx = torch.as_tensor(scale_rows_clms[1], dtype=dtype, device=device)
+
+    theta = torch.as_tensor(theta_deg, dtype=dtype, device=device)
+
+    ty = torch.as_tensor(t_rows_clms[0], dtype=dtype, device=device)
+    tx = torch.as_tensor(t_rows_clms[1], dtype=dtype, device=device)
+
+    cx = (W - 1) / 2.0
+    cy = (H - 1) / 2.0
+
+    T = torch.eye(3, dtype=dtype, device=device)
+    T[0, 2] = tx
+    T[1, 2] = ty
+
+    Tc = torch.eye(3, dtype=dtype, device=device)
+    Tc[0, 2] = -cx
+    Tc[1, 2] = -cy
+
+    Tc_inv = torch.eye(3, dtype=dtype, device=device)
+    Tc_inv[0, 2] = cx
+    Tc_inv[1, 2] = cy
+
+    th = theta * torch.pi / 180.0
+    c = torch.cos(th)
+    s = torch.sin(th)
+
+    R = torch.eye(3, dtype=dtype, device=device)
+    R[0, 0] = c
+    R[0, 1] = -s
+    R[1, 0] = s
+    R[1, 1] = c
+
+    S = torch.eye(3, dtype=dtype, device=device)
+    S[0, 0] = sx
+    S[1, 1] = sy
+
+    # ok now here is where i decided to shift first 
+    # then rotate around the center then scale around the center
+    M_forward = (
+        Tc_inv
+        @ S
+        @ R
+        @ Tc
+        @ T
+    )   
+
+    P = torch.tensor(
+        [
+            [2.0 / W, 0.0, -1.0 + 1.0 / W],
+            [0.0, 2.0 / H, -1.0 + 1.0 / H],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=dtype,
+        device=device,
     )
-    return transformed
 
-def build_affine_theta(trans_row: float, trans_col: float,
-                       scale_row: float, scale_col: float,
-                       rot_angle: float,
-                       H: int, W: int, device: torch.device):
-    """
-    Build 2x3 affine theta in normalized coords for F.affine_grid.
-    Parameters trans_row/trans_col are in PIXELS.
-    scale_row: scaling along image rows (y axis).
-    scale_col: scaling along image cols (x axis).
-    rot_angle: radians (positive = CCW).
-    """
-    # rotation
-    c = torch.cos(torch.tensor(rot_angle, device=device))
-    s = torch.sin(torch.tensor(rot_angle, device=device))
+    P_inv = torch.inverse(P)
+    M_sampling = torch.inverse(M_forward)
+    M_norm = P @ M_sampling @ P_inv
+    theta_grid = M_norm[:2].unsqueeze(0).expand(B, -1, -1)
 
-    # linear part in physical (x,y) pixel axes: A = R @ S
-    # note: x corresponds to columns, y to rows
-    A = torch.zeros((2, 2), device=device)
-    # S = diag(scale_col, scale_row)
-    A[0, 0] = c * scale_col   # a11 (x <- x)
-    A[0, 1] = -s * scale_row  # a12 (x <- y)
-    A[1, 0] = s * scale_col   # a21 (y <- x)
-    A[1, 1] = c * scale_row   # a22 (y <- y)
+    grid = F.affine_grid(
+        theta_grid,
+        img.shape,
+        align_corners=False,
+    )
 
-    # convert pixel translations to normalized coords in [-1,1] (align_corners=True)
-    if W > 1:
-        tx_norm = 2.0 * trans_col / (W - 1)
-    else:
-        tx_norm = 0.0
-    if H > 1:
-        ty_norm = 2.0 * trans_row / (H - 1)
-    else:
-        ty_norm = 0.0
+    out = F.grid_sample(
+        img,
+        grid,
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=False,
+    )
 
-    theta = torch.zeros((2, 3), device=device)
-    theta[:, :2] = A
-    theta[0, 2] = tx_norm
-    theta[1, 2] = ty_norm
-    return theta
-
-def warp_image_with_params(in_img: torch.Tensor,
-                           trans_row: float = 0, trans_col: float = 0,
-                           scale_row: float = 1, scale_col: float = 1,
-                           rot_angle: float = 0):
-    """
-    Warp in_img using the affine parameters. in_img shape can be (H,W) or (1,H,W) or (C,H,W).
-    Returns warped image same shape as input (except channel preserved).
-    """
-    # normalize shapes
-    x = in_img
-    if x.dim() == 2:
-        x = x.unsqueeze(0).unsqueeze(0)  # 1x1xHxW
-        squeeze_out = True
-    elif x.dim() == 3:
-        # C x H x W -> add batch
-        x = x.unsqueeze(0)               # 1xC x H x W
-        squeeze_out = True
-    elif x.dim() == 4:
-        # assume already has batch (not supported)
-        squeeze_out = False
-    else:
-        raise ValueError("in_img must be HxW, CxHxW, or BxCxHxW")
-
-    B, C, H, W = x.shape
-    device = x.device
-
-    theta = build_affine_theta(trans_row, trans_col, scale_row, scale_col, rot_angle, H, W, device)
-    theta = theta.unsqueeze(0)  # batch dim
-
-    # affine_grid + grid_sample (align_corners=True for consistent normalization)
-    grid = F.affine_grid(theta, size=(B, C, H, W), align_corners=True)  # BxHxWx2
-    warped = F.grid_sample(x, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
-    if squeeze_out:
-        # remove batch dimension and if originally single-channel, remove channel too
-        warped = warped.squeeze(0)
-        if in_img.dim() == 2:
-            warped = warped.squeeze(0)
-    return warped
+    return out
 
 def register_affine(in_image: torch.Tensor,
                     target_image: torch.Tensor,
                     n_iters: int = 200,
-                    lr: float = 1e-1,
-                    eps_numdiff: float = 1e-3,
+                    lr = 1e-1,
                     trans_row = 0.0,
                     trans_col = 0.0,
                     scale_row = 1.0,
                     scale_col = 1.0,
                     rot_angle = 0.0,
+                    initial_CoM_alignment: bool = True,
                     verbose: bool = True,
-                    loss_func = get_cc,
-                    fig_ax_bins = None,
+                    loss_func = default_mse_fallback,
                     log_period = 5,
-                    device: torch.device = 'cpu') -> Tuple[float, float, float, float, float, torch.Tensor]:
-    """
-    Perform affine registration of ``in_image`` to ``target_image`` by maximizing
-    a similarity measure (default: cross-correlation via ``get_cc``).  
-    Optimization is performed on five affine parameters:
+                    return_progress: bool = False,
+                    device: torch.device = 'cpu'):
+    
+    device_orig = in_image.device
 
-        - ``trans_row`` : translation along rows (Δy)
-        - ``trans_col`` : translation along columns (Δx)
-        - ``scale_row`` : scaling in the row direction
-        - ``scale_col`` : scaling in the column direction
-        - ``rot_angle`` : in-plane rotation angle (radians)
+    if isinstance(lr, (list, tuple, torch.Tensor)):
+        assert len(lr) == 5, 'lr can be a float number or a sequence of five float numbers'
+        lr_trans_row, lr_trans_col, lr_scale_row, lr_scale_col, lr_rot = lr
+    else:
+        lr_trans_row = lr_trans_col = lr_scale_row = lr_scale_col = lr_rot = float(lr)
 
-    The optimizer uses **central finite-difference numerical gradients** and
-    gradient descent (optionally with a per-parameter learning-rate vector).
-
-    Parameters
-    ----------
-    in_image : torch.Tensor
-        Input image to be warped. Must have shape ``HxW`` or ``CxHxW``.
-        Multi-channel inputs are flattened across channels for the similarity
-        metric.
-
-    target_image : torch.Tensor
-        Fixed reference image with the same spatial size as ``in_image``.
-
-    n_iters : int, default=200
-        Number of optimization iterations.
-
-    lr : float or sequence of float, default=1e-1
-        Learning rate.  
-        - If a single float: same LR is used for all parameters.  
-        - If a list/tuple of length 5: per-parameter learning rates are used
-          in the order
-          ``[trans_row, trans_col, scale_row, scale_col, rot_angle]``.
-
-    eps_numdiff : float, default=1e-3
-        Step size for central finite-difference numerical derivatives.
-        - If a single float: same eps_numdiff is used for all parameters.  
-        - If a list/tuple of length 5: per-parameter epsilons are used
-          in the order
-          ``[trans_row, trans_col, scale_row, scale_col, rot_angle]``.
-
-    trans_row, trans_col : float, default=0.0
-        Initial translations in pixels.
-
-    scale_row, scale_col : float, default=1.0
-        Initial scale factors along row and column axes.
-
-    rot_angle : float, default=0.0
-        Initial rotation angle (radians).
-
-    verbose : bool, default=True
-        If True, prints progress and optionally shows a scatter-plot of
-        warped-vs-target intensities.
-
-    loss_func : callable, default=get_cc
-        Similarity function. Must accept ``(warped, target)`` and return a
-        scalar similarity score. The optimizer **maximizes** this value by
-        minimizing ``loss = -similarity``.
-
-    fig_ax_bins : int or tuple or None, default=None
-        If provided, enables online visualization using ``plt_hist2`` by
-        histogramming (warped, target) pixel pairs. Ignored outside notebooks.
-
-    log_period : float, default=5
-        Minimum time interval (seconds) between verbose log prints.
-
-    device : torch.device or None, default=None
-        Device for computation. If None, uses ``in_image.device`` or CPU.
-
-    Returns
-    -------
-    trans_row_f : float  
-        Optimized row translation.
-
-    trans_col_f : float  
-        Optimized column translation.
-
-    scale_row_f : float  
-        Optimized vertical scale.
-
-    scale_col_f : float  
-        Optimized horizontal scale.
-
-    rot_angle_f : float  
-        Optimized rotation angle in radians.
-
-    warped_image : torch.Tensor  
-        Final warped version of ``in_image`` with the same shape as input.
-
-    Notes
-    -----
-    - ``in_image`` and ``target_image`` must have identical spatial dimensions.
-    - Works with 2D grayscale or multi-channel images; for similarity evaluation
-      all channels are flattened.
-    - Numerical gradients use central finite differences:
-      ``∂L/∂p ≈ (L(p+ε) - L(p-ε)) / (2ε)``.
-    - The function maximizes the similarity metric by minimizing ``-similarity``.
-    - ``warp_image_with_params`` must implement the affine transformation
-      defined by the five parameters.
-    """
-
-    try:
-        device_orig = in_image.device
-    except:
-        device_orig = device
-
-    try:
-        if len(lr) == 5:
-            lr=torch.tensor(lr).cuda()
-    except: assert lr == float(lr), \
-        'lr can be a float number or a list of five float numbers'
-    try:
-        if len(eps_numdiff) == 5:
-            eps_numdiff=torch.tensor(eps_numdiff).to(device)
-    except: 
-        assert eps_numdiff == float(eps_numdiff), \
-            'eps_numdiff can be a float number or a list of five float numbers'
-        eps_numdiff=torch.tensor([eps_numdiff]*5).to(device)
-
-    # prepare tensors on device and float
+    orig_dims = in_image.dim()
     inp = in_image.to(device=device, dtype=torch.float32)
     tgt = target_image.to(device=device, dtype=torch.float32)
 
+    if orig_dims == 2:
+        inp = inp.unsqueeze(0).unsqueeze(0)
+        tgt = tgt.unsqueeze(0).unsqueeze(0)
+    elif orig_dims == 3:
+        inp = inp.unsqueeze(0)
+        tgt = tgt.unsqueeze(0)
+
+    if initial_CoM_alignment:
+        with torch.no_grad():
+            B, C, H, W = inp.shape
+            r_coords = torch.arange(H, dtype=torch.float32, device=device).view(1, 1, H, 1)
+            c_coords = torch.arange(W, dtype=torch.float32, device=device).view(1, 1, 1, W)
+            
+            sum_inp = inp.sum()
+            if sum_inp > 0:
+                com_r_inp = (inp * r_coords).sum() / sum_inp
+                com_c_inp = (inp * c_coords).sum() / sum_inp
+            else:
+                com_r_inp, com_c_inp = torch.tensor(H / 2.0, device=device), torch.tensor(W / 2.0, device=device)
+                
+            sum_tgt = tgt.sum()
+            if sum_tgt > 0:
+                com_r_tgt = (tgt * r_coords).sum() / sum_tgt
+                com_c_tgt = (tgt * c_coords).sum() / sum_tgt
+            else:
+                com_r_tgt, com_c_tgt = torch.tensor(H / 2.0, device=device), torch.tensor(W / 2.0, device=device)
+                
+            com_offset_row = (com_r_tgt - com_r_inp).item()
+            com_offset_col = (com_c_tgt - com_c_inp).item()
+            
+            trans_row += com_offset_row
+            trans_col += com_offset_col
+            
+            if verbose:
+                print(f"Initial Center of Mass Alignment applied:")
+                print(f"  Input CoM:  (Row: {com_r_inp.item():.2f}, Col: {com_c_inp.item():.2f})")
+                print(f"  Target CoM: (Row: {com_r_tgt.item():.2f}, Col: {com_c_tgt.item():.2f})")
+                print(f"  Pre-shift Offset Vector: (Row: {com_offset_row:.2f}, Col: {com_offset_col:.2f})")
+    elif verbose:
+        print("Center of Mass Alignment bypassed. Relying entirely on raw parameter initializations.")
+
+    t_rows = torch.tensor(trans_row, dtype=torch.float32, device=device, requires_grad=True)
+    t_clms = torch.tensor(trans_col, dtype=torch.float32, device=device, requires_grad=True)
+    s_rows = torch.tensor(scale_row, dtype=torch.float32, device=device, requires_grad=True)
+    s_clms = torch.tensor(scale_col, dtype=torch.float32, device=device, requires_grad=True)
+    theta  = torch.tensor(rot_angle, dtype=torch.float32, device=device, requires_grad=True)
+
+    optimizer = optim.Adam([
+        {'params': [t_rows], 'lr': lr_trans_row},
+        {'params': [t_clms], 'lr': lr_trans_col},
+        {'params': [s_rows], 'lr': lr_scale_row},
+        {'params': [s_clms], 'lr': lr_scale_col},
+        {'params': [theta],  'lr': lr_rot}
+    ])
+
     if verbose:
-        import time
-        if fig_ax_bins is not None:
-            from lognflow.plt_utils import plt_hist2, plt
-            from lognflow.utils import is_notebook
-            _is_notebook = is_notebook()
-            if _is_notebook:
-                if verbose:
-                    print('Visualising the relative pixels values in a notebook')
-                from IPython.display import display, clear_output
+        print('\nColumns of the printed outputs are: ')
+        print('trans_row, trans_col, scale_row, scale_col, rot_angle')
+        time_time_log_prev = time.time()
 
-    # ensure shape compatibility: use single-channel registration (flatten across channels)
-    # if multi-channel, we'll average channels when computing CC
-    def flatten_for_cc(img):
-        # img may be HxW, CxHxW, or 1xHxW
-        t = img
-        if t.dim() == 2:
-            return t.reshape(-1)
-        elif t.dim() == 3:
-            # channels present -> flatten across channels too
-            return t.reshape(-1)
-        elif t.dim() == 4:
-            return t.reshape(-1)
-        else:
-            raise ValueError("Unsupported image dims for CC")
+    progress_history = []
+    base_loss_prev = 1.0e20
 
-    # check shapes
-    # unify to at least CxHxW or HxW
-    if inp.dim() not in (2, 3):
-        raise ValueError("in_image must be HxW or CxHxW")
-    if tgt.dim() not in (2, 3):
-        raise ValueError("target_image must be HxW or CxHxW")
-
-    # ensure same H,W
-    H_in = inp.shape[-2]
-    W_in = inp.shape[-1]
-    H_t = tgt.shape[-2]
-    W_t = tgt.shape[-1]
-    if (H_in != H_t) or (W_in != W_t):
-        raise ValueError("in_image and target_image must have same H,W")
-
-    params = ['trans_row', 'trans_col', 'scale_row', 'scale_col', 'rot_angle']
-    # list-style for convenience
-    pvals = torch.tensor([trans_row, trans_col, scale_row, scale_col, rot_angle], device=device, dtype=torch.float32)
-    print('Columns of the printed outputs are: ')
-    print('trans_row, trans_col, scale_row, scale_col, rot_angle')
-    # small helper to compute loss for a given param vector
-    def compute_loss_from_pvals(pvec):
-        tr = float(pvec[0].item())
-        tc = float(pvec[1].item())
-        sr = float(pvec[2].item())
-        sc = float(pvec[3].item())
-        ra = float(pvec[4].item())
-        warped = warp_image_with_params(inp, tr, tc, sr, sc, ra)
-        # flatten to vectors
-        
-        # loss = ((warped - tgt)**2).max()
-        loss = -loss_func(warped, tgt)
-        
-        # we want to maximize CC, so loss = -cc
-        return loss, warped
-
-    # main optimization loop
-    if verbose:
-        time_time_log_perv = time.time()
-    base_loss_perv = 1.0e20
     for it in range(n_iters):
-        base_loss, _ = compute_loss_from_pvals(pvals)
+        moving_img = affine_transform_differentiable(
+            inp, 
+            scale_rows_clms=(s_rows, s_clms), 
+            theta_deg=theta, 
+            t_rows_clms=(t_rows, t_clms)
+        )
+        
+        raw_loss = loss_func(moving_img, tgt)
+        loss = -raw_loss if (loss_func.__name__ == 'get_cc' or 'cc' in loss_func.__name__.lower()) else raw_loss
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        # compute numerical gradient for each parameter using central difference
-        grads = torch.zeros_like(pvals)
-        for i in range(len(pvals)):
-            if eps_numdiff[i] == 0:
-                continue
-            # perturb +/- eps
-            p_plus = pvals.clone()
-            p_minus = pvals.clone()
-            p_plus[i] += eps_numdiff[i]
-            p_minus[i] -= eps_numdiff[i]
-
-            loss_plus, _ = compute_loss_from_pvals(p_plus)
-            loss_minus, _ = compute_loss_from_pvals(p_minus)
-            # central difference
-            grad_i = (loss_plus - loss_minus) / (2.0 * eps_numdiff[i])
-            grads[i] = grad_i
-
-        # gradient descent step: p := p - lr * grad
-        pvals = pvals - lr * grads
+        pvals = torch.stack([t_rows, t_clms, s_rows, s_clms, theta]).detach().cpu().numpy()
+        
+        if return_progress:
+            progress_history.append((pvals.copy(), moving_img[0, 0].detach().cpu().numpy(), loss.item()))
 
         if verbose:
             time_time_log = time.time()
-            if (time_time_log > time_time_log_perv + log_period) or (it == n_iters - 1):
-                time_time_log_perv = time_time_log
-                if fig_ax_bins is not None:
-                    _, final_warped = compute_loss_from_pvals(pvals)
-                    if _is_notebook:
-                        plt.close()
-                        clear_output()
-                        fig, ax, x_edges, y_edges = plt_hist2(np.column_stack((final_warped.ravel(), tgt.ravel())), bins = fig_ax_bins, return_bins = True)
-                        ax.plot([y_edges.min(), x_edges.min()], [y_edges.max(), x_edges.max()], 'r-.')
-                        display(fig)
-                print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
-        
-        if torch.abs(base_loss - base_loss_perv) < 1e-12:
+            if (time_time_log > time_time_log_prev + log_period) or (it == n_iters - 1):
+                time_time_log_prev = time_time_log
+                print(f"iter {it+1}/{n_iters} loss={loss.item():.6f} params={pvals}")
+
+        if torch.abs(loss - base_loss_prev) < 1e-12:
+            if verbose:
+                print(f"Converged early at iteration {it+1} due to minimal loss changes.")
             break
-        base_loss_perv = base_loss
+        base_loss_prev = loss
 
-    print(f"iter {it+1}/{n_iters} loss={base_loss.item():.6f} params={pvals.cpu().numpy()}")
-    # final warp with optimized params
-    _, final_warped = compute_loss_from_pvals(pvals)
-    # unpack final params
-    trans_row_f = float(pvals[0].item())
-    trans_col_f = float(pvals[1].item())
-    scale_row_f = float(pvals[2].item())
-    scale_col_f = float(pvals[3].item())
-    rot_angle_f = float(pvals[4].item())
+    with torch.no_grad():
+        final_warped = affine_transform_differentiable(
+            inp, 
+            scale_rows_clms=(s_rows, s_clms), 
+            theta_deg=theta, 
+            t_rows_clms=(t_rows, t_clms)
+        )
 
-    # return final parameters and warped image (same shape as input)
-    return trans_row_f, trans_col_f, scale_row_f, scale_col_f, rot_angle_f, final_warped.to(device_orig)
-    
-def test_register_affine():
-    in_img = np.random.rand(100, 100)
-    target_img = in_img[:80, 80]
-    target_img = mcemtools.masking.crop_or_pad(target_img, (100, 100))
-    tr, tc, sr, sc, ra, warped = mcemtools.analysis.register_affine(in_img, target_img,
-                                                    n_iters=1200,
-                                                    lr=0.5,
-                                                    eps_numdiff=1e-2,
-                                                    verbose=True,
-                                                    device=torch.device('cpu'))
-    
-    print("Estimated params:", tr, tc, sr, sc, ra)
-    
-    from lognflow.plt_utils import plt_imshow_subplots, plt
-    plt_imshow_subplots([in_img, target_img, warped], titles = ['in_img', 'target_img', 'warped'])
+    if orig_dims == 2:
+        final_warped = final_warped[0, 0]
+    elif orig_dims == 3:
+        final_warped = final_warped[0]
+
+    final_warped = final_warped.to(device_orig)
+
+    if return_progress:
+        return float(t_rows.item()), float(t_clms.item()), float(s_rows.item()), float(s_clms.item()), float(theta.item()), final_warped, progress_history
+    else:
+        return float(t_rows.item()), float(t_clms.item()), float(s_rows.item()), float(s_clms.item()), float(theta.item()), final_warped
+
+def register_affine_show_history(target_img, history):
+    from lognflow.plt_utils import plt_contours, np
+    print("\nBeginning playback visualization loop...")
+    fig, axes = plt.subplots(1, 3)
+    for step, (params, moving_frame, loss_val) in enumerate(history):
+        p_tr, p_tc, p_sr, p_sc, p_rot = params
+        axes[0].cla() 
+        axes[0].imshow(target_img.cpu().numpy(), cmap='magma')
+        
+        axes[1].cla() 
+        plt_contours([np.flip(target_img.cpu().numpy().T, axis = 1), np.flip(moving_frame.T, axis = 1)], fig_ax = (fig, axes[1]))
+
+        axes[2].cla() 
+        axes[2].imshow(moving_frame, cmap='viridis')
+        fig.suptitle(f"Step: {step} | Loss: {loss_val:.5f}\n"
+                     f"Trans rows: {p_tr:.1f} | Trans clms: {p_tc:.1f}\n"
+                     f"Rot: {p_rot:.1f}° | Scale: ({p_sr:.2f}, {p_sc:.2f})")
+        plt.draw()
+        plt.pause(0.02)  
     plt.show()
+
+def test_register_affine():
+    # 1. Prepare base images in legacy standard 2D formats
+    img_base = torch.zeros((100, 100), dtype=torch.float32)
+    img_base[30:50, 10:50] = 1.0  
+    
+    true_t = (40.0, 20.0)     
+    true_theta = -30.0         
+    true_scale = (0.75, 1.25)   
+    
+    # Generate target image
+    with torch.no_grad():
+        target_img = affine_transform_differentiable(
+            img_base.unsqueeze(0).unsqueeze(0), 
+            scale_rows_clms=true_scale, 
+            theta_deg=true_theta, 
+            t_rows_clms=true_t
+        )[0, 0]
+
+    # Assign learning rates. 
+    # Notice we can set translation lr to 0.0 or very low now because CoM initialization 
+    # instantly performs the bulk of the translation work!
+    custom_lrs = [0.1, 0.1, 0.01, 0.01, 0.5]
+
+    print("Beginning registration tracking engine run...")
+    # 2. Extract out tracking arrays seamlessly matching historical returns pattern requirements
+    tr_r, tr_c, sc_r, sc_c, rot, final_img, history = register_affine(
+        in_image=img_base,
+        target_image=target_img,
+        n_iters=500,
+        lr=custom_lrs,
+        log_period=2,
+        verbose=True,
+        return_progress=True,
+        device='cpu'
+    )
+
+    print()
+    print("Final discovered parameters vs Ground Truth targets:")
+    print(f"Translation Row: {tr_r:.3f} [Target: {true_t[0]}]")
+    print(f"Translation Col: {tr_c:.3f} [Target: {true_t[1]}]")
+    print(f"Scale Row:       {sc_r:.3f} [Target: {true_scale[0]}]")
+    print(f"Scale Col:       {sc_c:.3f} [Target: {true_scale[1]}]")
+    print(f"Rotation Angle:  {rot:.2f}° [Target: {true_theta}°]")
+
+    register_affine_show_history(target_img, history)
+
+if __name__ == "__main__":
+    test_register_affine()
