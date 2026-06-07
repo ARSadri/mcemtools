@@ -1,7 +1,7 @@
 import time
 import torch
 import numpy as np
-from lgnflow import getLogger, printprogress
+from lognflow import getLogger, printprogress
 
 import mcemtools
 

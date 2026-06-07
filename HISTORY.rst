@@ -200,3 +200,7 @@ History
 0.11.2 (2026-06-08)
 -------------------
 * Reproduced the denoising for the real experimental SrTiO3 from npj paper
+
+0.11.3 (2026-06-08)
+-------------------
+* Critical error fixed
