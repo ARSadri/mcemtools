@@ -1,10 +1,7 @@
 import time
 import torch
 import numpy as np
-import scipy.ndimage
-import matplotlib.pyplot as plt
-from lognflow.plt_utils import plt_colorbar, plt_imshow
-from lognflow import lognflow, printprogress
+from lgnflow import getLogger, printprogress
 
 import mcemtools
 
@@ -319,19 +316,19 @@ def denoise4_unet(
     
     if(include_training):
         if(not log_exist_ok):
-            logged = lognflow(log_dir = logs_root)
+            logged = getLogger(log_dir = logs_root)
             exp_list_names = logged.get_flist(
                 f'denoised*/I4D_denoiser/I4D_denoised/denoised_*.npy')
             if len(exp_list_names)>0:
                 return
-        logger = lognflow(logs_root, log_dir_prefix = 'denoised4D_UNet')
+        logger = getLogger(logs_root, log_dir_prefix = 'denoised4D_UNet')
     else:
         if(not log_exist_ok):
-            logger = lognflow(logs_root)
+            logger = getLogger(logs_root)
         else:
-            logger = lognflow(log_dir = pretrained_model_fpath.parent.parent)    
+            logger = getLogger(log_dir = pretrained_model_fpath.parent.parent)    
 
-    logger_ref            = lognflow(log_dir = ref_dir, time_tag = False)
+    logger_ref            = getLogger(log_dir = ref_dir, time_tag = False)
     data4D_noisy          = logger_ref.load('noisy.npy')
     data4D_nonoise        = logger_ref.load('nonoise.npy')
     if use_pre_denoised_STEM:
@@ -907,7 +904,8 @@ def denoise4_unet(
     
     return logger_dir
 
-def criterion_I4D_LAGMUL_recom(kcnt, n_ksweeps): 
+def criterion_I4D_LAGMUL_recom(
+        kcnt, n_ksweeps): 
     k_ratio = kcnt/n_ksweeps
     #LAGMUL: 1 is for Gaussian and 0 is for Poisson
     if(  (0   < k_ratio) | (k_ratio <= 2/3)):
@@ -916,7 +914,7 @@ def criterion_I4D_LAGMUL_recom(kcnt, n_ksweeps):
         LAGMUL = 0
     return LAGMUL
 
-def denoise4D_unet_old(
+def denoise4D_unet(
     logs_root, 
     hyps_I4D,
     criterion_I4D_LAGMUL = criterion_I4D_LAGMUL_recom,
@@ -931,8 +929,7 @@ def denoise4D_unet_old(
     assert (logs_root / 'ref/noisy.npy').is_file(), \
         'make sure you have a ref directory in logs_root that includes noisy.npy'
     
-    logger = lognflow(logs_root, log_dir_prefix = 'denoised4D_UNet')
-    logger.code()
+    logger = getLogger(logs_root, log_dir_prefix = 'denoised4D_UNet')
     logger(f'hyps_I4D:{hyps_I4D}')
     logger.save('I4D_denoiser/hyps_I4D', hyps_I4D, time_tag = False)
 
@@ -1246,7 +1243,5 @@ def denoise4D_unet_old(
     
     if hyps_I4D['test_mode']:
         logger('NOTE: NO TRAINING WAS CARRIED ON AS THIS IS TEST MODE')
-        
-    del logger
-    
-    return logger_dir
+            
+    return logger

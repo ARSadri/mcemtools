@@ -4,7 +4,7 @@
 
 __author__ = """Alireza Sadri"""
 __email__ = 'alireza.sadri@monash.edu'
-__version__ = '0.11.1'
+__version__ = '0.11.2'
 
 from .mcemtools import viewer_4D, nvidia_smi_line
 
@@ -42,7 +42,7 @@ from .data import (open_muSTEM_binary,
                    )
 
 from .denoise.denoise4_tsvd    import denoise4_tsvd
-from .denoise.denoise4_unet    import denoise4_unet
+from .denoise.denoise4_unet    import denoise4D_unet
 from .denoise.denoise4_tk_r_em import tk_r_em
 from .denoise.cluster4_unet    import cluster4_unet
 from .denoise.DATOS            import DATOS, nn_from_torch

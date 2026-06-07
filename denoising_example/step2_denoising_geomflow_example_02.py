@@ -6,7 +6,7 @@ from   lognflow import lognflow
 from   lognflow.plt_utils import np, plt, plt_imshow
 
 import mcemtools
-from mcemtools import denoise4_unet
+from mcemtools import denoise4D_unet
 from mcemtools.data import np_random_poisson_no_zeros
 
 def criterion_I4D_LAGMUL(kcnt, n_ksweeps): 
@@ -686,7 +686,7 @@ if __name__ == '__main__':
                                             )
                                         try:
                                             if(model_type == 'UNET'):
-                                                exp_dir = mcemtools.denoise4_unet(
+                                                exp_dir = mcemtools.denoise4D_unet(
                                                     **experiment_settings,
                                                     **problem_settings,
                                                     **more_settings)

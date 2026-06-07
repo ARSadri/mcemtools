@@ -196,3 +196,7 @@ History
 0.11.1 (2026-05-24)
 -------------------
 * Fixed the affine transform and registration function and added a test
+
+0.11.2 (2026-06-08)
+-------------------
+* Reproduced the denoising for the real experimental SrTiO3 from npj paper
