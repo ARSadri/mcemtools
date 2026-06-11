@@ -217,13 +217,18 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         
         self.CoMs = CoNs
 
-    def forward(self, y_out, x_in, inds):
+    def forward(self, y_out, x_in, inds, x_in_int_threshold = 0):
         n_images = x_in.shape[0]
-        log_factorial_x_in = torch.from_numpy(np.cumsum(np.log((x_in + 
+        x_in_int = x_in.clone()
+        if x_in_int_threshold > 0:
+            x_in_int[x_in_int < x_in_int_threshold] = 0 #numberical eps is set to 0
+            x_in_int = torch.ceil(x_in_int)     #in case data needs to be turned into integer
+
+        log_factorial_x_in = torch.from_numpy(np.cumsum(np.log((x_in_int + 
             self.output_stabilizer).cpu().numpy())).reshape(x_in.shape)).cuda()
 
         log_y_out = torch.log(y_out.float() + self.output_stabilizer)
-        err_p = x_in * log_y_out - y_out - log_factorial_x_in
+        err_p = x_in_int * log_y_out - y_out - log_factorial_x_in
         err_p[:, :, self.mask_backprop == 0] = 0
         res_p = - err_p.sum() / self.mask_backprop_sum / n_images
         
@@ -236,7 +241,7 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         if self.CoMs is None:
             res_CoMs = 0
         else:
-            res_CoMs = 0
+            res_CoMs = 1    #not implemented
             
         if self.noisy_PACBED is None:
             res_PAC = 0

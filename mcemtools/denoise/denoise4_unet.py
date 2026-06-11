@@ -863,9 +863,9 @@ def denoise4_unet(
                 logger.save('I4D_denoiser/I4D_denoised_inter/denoised', data4D_denoised)
             
             data4D_noisy_diffused = data4D_noisy.copy()
-            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= beta
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= (1 - beta)
             data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] += \
-                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * (1 - beta)
+                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * beta
             data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
             data_gen_I4D.update(data4D_noisy_diffused, 
                                 update_label = hyps_I4D['refine_by_labels'])
@@ -884,9 +884,9 @@ def denoise4_unet(
             hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
             logger(hyps_I4D)
     
-    logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_noisy)
+    logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_denoised)
     
-    frame_denoised = mcemtools.data4D_to_frame(data4D_noisy)
+    frame_denoised = mcemtools.data4D_to_frame(data4D_denoised)
     frame_nonoise = mcemtools.data4D_to_frame(data4D_nonoise)
     frame_noisy = mcemtools.data4D_to_frame(data4D_noisy)
     logger.save('I4D_denoiser/canvases/denoised', frame_denoised)
@@ -1209,9 +1209,9 @@ def denoise4D_unet(
                 logger.save('I4D_denoiser/I4D_denoised_inter/denoised', data4D_denoised)
             
             data4D_noisy_diffused = data4D_noisy.copy()
-            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= beta
+            data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] *= (1 - beta)
             data4D_noisy_diffused[edgew : -(edgew), edgew : -(edgew)] += \
-                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * (1 - beta)
+                data4D_denoised[edgew:-edgew, edgew:-edgew].copy() * beta
             data4D_noisy_diffused = data4D_noisy_diffused.astype('float32')
             data_gen_I4D.update(data4D_noisy_diffused, 
                                 update_label = hyps_I4D['refine_by_labels'])
@@ -1230,11 +1230,10 @@ def denoise4D_unet(
             hyps_I4D['learning_momentum'] *= hyps_I4D['learning_momentum_decay']
             logger(hyps_I4D)
             
-    logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_noisy)
+    logger.save('I4D_denoiser/I4D_denoised/denoised', data4D_denoised)
     
-    frame_denoised = mcemtools.data4D_to_frame(data4D_noisy[
+    frame_denoised = mcemtools.data4D_to_frame(data4D_denoised[
         edgew:n_show - edgew, edgew:n_show - edgew])
-    
     logger.imshow('I4D_denoiser/canvases/denoised', frame_denoised)
     
     logger_dir = logger.log_dir

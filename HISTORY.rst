@@ -204,3 +204,7 @@ History
 0.11.3 (2026-06-08)
 -------------------
 * Critical error fixed
+
+0.11.4 (2026-06-11)
+-------------------
+* fixed beta in to decrease the effect of noisy during denoising refinements
