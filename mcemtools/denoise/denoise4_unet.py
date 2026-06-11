@@ -931,7 +931,7 @@ def denoise4D_unet(
     
     logger = getLogger(logs_root, log_dir_prefix = 'denoised4D_UNet')
     logger(f'hyps_I4D:{hyps_I4D}')
-    logger.save('I4D_denoiser/hyps_I4D', hyps_I4D, time_tag = False)
+    logger.save('I4D_denoiser/hyps_I4D.json', hyps_I4D, time_tag = False)
 
     data4D_noisy = np.load(logs_root / 'ref/noisy.npy').astype('float32')
     if not (logs_root / 'ref/nonoise.npy').is_file():
