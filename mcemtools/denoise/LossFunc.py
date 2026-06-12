@@ -192,7 +192,8 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
                  noisy_mSTEM = None,
                  PAC_loss_factor = 0.01,
                  mSTEM_loss_factor = 0.01,
-                 CoNs = None):
+                 CoNs = None,
+                 x_in_int_threshold = 0):
         
         super(STEM4D_PoissonLoss_FnormLoss, self).__init__()
         self.LAGMUL = LAGMUL
@@ -216,13 +217,14 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         self.accumulated_inds.requires_grad = False
         
         self.CoMs = CoNs
+        self.x_in_int_threshold = x_in_int_threshold
 
-    def forward(self, y_out, x_in, inds, x_in_int_threshold = 0):
+    def forward(self, y_out, x_in, inds):
         n_images = x_in.shape[0]
         x_in_int = x_in.clone()
-        if x_in_int_threshold > 0:
-            x_in_int[x_in_int < x_in_int_threshold] = 0 #numberical eps is set to 0
-            x_in_int = torch.ceil(x_in_int)     #in case data needs to be turned into integer
+        if self.x_in_int_threshold > 0:
+            x_in_int[x_in_int < self.x_in_int_threshold] = 0 #numberical eps is set to 0
+            x_in_int = torch.ceil(x_in_int)
 
         log_factorial_x_in = torch.from_numpy(np.cumsum(np.log((x_in_int + 
             self.output_stabilizer).cpu().numpy())).reshape(x_in.shape)).cuda()
@@ -241,7 +243,7 @@ class STEM4D_PoissonLoss_FnormLoss(nn.Module):
         if self.CoMs is None:
             res_CoMs = 0
         else:
-            res_CoMs = 1    #not implemented
+            res_CoMs = 0
             
         if self.noisy_PACBED is None:
             res_PAC = 0

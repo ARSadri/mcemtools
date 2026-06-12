@@ -924,6 +924,8 @@ def denoise4D_unet(
     log_denoised_every_sweep = True,
     ):
 
+    hyps_I4D.setdefault('x_in_int_threshold', 0)
+
     exp_name = logs_root.stem
 
     assert (logs_root / 'ref/noisy.npy').is_file(), \
@@ -1076,6 +1078,7 @@ def denoise4D_unet(
             noisy_STEM_loss.ravel()).float().to(device),
         PAC_loss_factor = hyps_I4D['PAC_loss_factor'],
         mSTEM_loss_factor = hyps_I4D['mSTEM_loss_factor'],
+        x_in_int_threshold = hyps_I4D['x_in_int_threshold'],
         )
     if hyps_I4D['test_mode']:
         torchModel_I4D.dgen = data_gen_I4D

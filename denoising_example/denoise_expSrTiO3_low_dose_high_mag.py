@@ -80,6 +80,11 @@ hyps_I4D = dict(
     # we do not wish to train for the dark field if it is large you can
     # mask the PACBED
     PACBED_mask             = None,
+
+    # x_in_int_threshold: Zero has no effect, otherwise:
+    # makes data integer at the poisson loss, i.e.:
+    # 1- data[data < thresh] = 0 and 2- data = ceil(data)
+    x_in_int_threshold      = 0.1,  
     )
 
 logger = mcemtools.denoise.denoise4_unet.denoise4D_unet(logs_root, hyps_I4D)

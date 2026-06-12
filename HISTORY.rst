@@ -208,3 +208,7 @@ History
 0.11.4 (2026-06-11)
 -------------------
 * fixed beta in to decrease the effect of noisy during denoising refinements
+
+0.11.5 (2026-06-12)
+-------------------
+* added an option to make sure the poisson loss uses integer inputs
